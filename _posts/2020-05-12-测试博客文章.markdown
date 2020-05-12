@@ -1,0 +1,8 @@
+---
+layout: post
+title:  "测试博客文章"
+date:   2020-05-12 11:09:22 +0800
+categories: Android
+---
+
+## this is chuck chan's blog about technology and life.

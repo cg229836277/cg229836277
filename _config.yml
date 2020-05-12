@@ -1,1 +1,86 @@
-theme: jekyll-theme-cayman
+# Welcome to Jekyll!
+#
+# This config file is meant for settings that affect your whole blog, values
+# which you are expected to set up once and rarely edit after that. If you find
+# yourself editing this file very often, consider using Jekyll's data files
+# feature for the data you need to update frequently.
+#
+# For technical reasons, this file is *NOT* reloaded automatically when you use
+# 'bundle exec jekyll serve'. If you change this file, please restart the server process.
+#
+# If you need help with YAML syntax, here are some quick references for you: 
+# https://learn-the-web.algonquindesign.ca/topics/markdown-yaml-cheat-sheet/#yaml
+# https://learnxinyminutes.com/docs/yaml/
+#
+# Site settings
+# These are used to personalize your new site. If you look in the HTML files,
+# you will see them accessed via {{ site.title }}, {{ site.email }}, and so on.
+# You can create any custom variable you would like, and they will be accessible
+# in the templates via {{ site.myvariable }}.
+
+title: Chuck Chan
+SEOTitle: Chuck Chan的个人网站
+header-img: /assets/header.png
+description: 我是一条小河，我无心由你的身边绕过你无心把你彩霞般的影儿，投入了我软软的柔波。
+locale: zh
+email: "1301958187@qq.com"
+url: ""
+social:
+  github: "cg229836277"
+
+
+# Build settings
+#theme: minima
+markdown: kramdown
+highlighter: rouge
+remote_theme: cg229836277/jekyll-theme-persephone
+permalink: /blog/:title:output_ext
+timezone: Asia/Shanghai
+defaults:
+  -
+    scope:
+      path: ""
+      type: "pages"
+    values:
+      layout: "page"
+      keywords: Chuck Chan, 博客
+      description: Chuck Chan，程序员，分享编程、建站、生活感悟等。
+  -
+    scope:
+      path: ""
+      type: "posts"
+    values:
+      layout: "post"
+plugins:
+  - jekyll-feed
+
+# Theme Settings
+logo: /assets/logo.svg
+rss: "/feed.xml"
+theme_setting:
+  blog_page: "index.markdown"
+  about_page: "about.markdown"
+  archive_page: "archive.markdown"
+  nav_pages:
+    - "about.markdown"
+    - "archive.markdown"
+
+# Exclude from processing.
+# The following items will not be processed, by default.
+# Any item listed under the `exclude:` key here will be automatically added to
+# the internal "default list".
+#
+# Excluded items can be processed by explicitly listing the directories or
+# their entries' file path in the `include:` list.
+#
+# exclude:
+#   - .sass-cache/
+#   - .jekyll-cache/
+#   - gemfiles/
+#   - Gemfile
+#   - Gemfile.lock
+#   - node_modules/
+#   - vendor/bundle/
+#   - vendor/cache/
+#   - vendor/gems/
+#   - vendor/ruby/
