@@ -20,7 +20,7 @@
 
 title: Chuck Chan
 SEOTitle: Chuck Chan的个人网站
-header-img: /assets/header.png
+header-img: assets/header.png
 description: 我是一条小河，我无心由你的身边绕过你无心把你彩霞般的影儿，投入了我软软的柔波。
 locale: zh
 email: "1301958187@qq.com"
@@ -64,6 +64,26 @@ theme_setting:
   nav_pages:
     - "about.markdown"
     - "archive.markdown"
+
+# Gitalk
+gitalk:
+  enable: true    #是否开启Gitalk评论
+  clientID: e2bb75208882135bdce8                            #生成的clientID
+  clientSecret: 016d2d3cc313aaa7dc9d5879c83dff3153b103c3    #生成的clientSecret
+  repo: cg229836277.github.io    #仓库名称
+  owner: cg229836277    #github用户名
+  admin: cg229836277
+  distractionFreeMode: true #是否启用类似FB的阴影遮罩
+  
+# 统计
+
+# Analytics settings
+# Baidu Analytics
+ba_track_id: 766111bd3cb8605b1812f169a641d51c
+
+# Google Analytics
+ga_track_id: 'UA-166268806-1'            # Format: UA-xxxxxx-xx
+ga_domain: chengang.plus
 
 # Exclude from processing.
 # The following items will not be processed, by default.
