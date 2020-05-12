@@ -68,8 +68,8 @@ theme_setting:
 # Gitalk
 gitalk:
   enable: true    #是否开启Gitalk评论
-  clientID: e2bb75208882135bdce8                            #生成的clientID
-  clientSecret: 016d2d3cc313aaa7dc9d5879c83dff3153b103c3    #生成的clientSecret
+  clientID: 80032e258c94975fd307                            #生成的clientID
+  clientSecret: 0f232691cc07f4c64b552d78dfa0e8e84f8f3a19    #生成的clientSecret
   repo: cg229836277.github.io    #仓库名称
   owner: cg229836277    #github用户名
   admin: cg229836277
