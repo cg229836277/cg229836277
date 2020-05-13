@@ -1,0 +1,338 @@
+---
+layout: post
+title:  "Flutter基础组件1"
+date:   2019-12-24 11:09:22 +0800
+categories: flutter
+---
+
+## 一、Container
+
+一个拥有绘制、定位、调整大小的 widget。
+容器首先由decoration中定义的边界属性围绕子widget，然后对填充范围应用附加约束（将宽度和高度合并为约束，如果非空的话）。 然后容器被margin属性设置的空隙边缘包围。
+在绘画过程中，容器首先应用给定的变换，然后绘制decoration以填充当前区域，然后绘制子widget，最后绘制foregroundDecoration，同时填充子widget区域。
+没有子widget的容器试图尽可能大，除非传入的约束是无限制的，否则它们尽可能地小。 有子widget的大小与容器的大小一致，但是容器的构造函数width，height和约束参数会覆盖这个属性，以实际设置的宽高或其他一些约束为准。
+示例：
+
+```dart
+import 'package:flutter/material.dart';
+
+void main() {
+  runApp(new MaterialApp(
+    title: 'Flutter Tutorial',
+    home: new MyButton(),
+  ));
+}
+
+class MyButton extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return new Container(
+      constraints: BoxConstraints.expand(
+        height: Theme.of(context).textTheme.display1.fontSize * 1.1 + 200.0,
+      ),
+      padding: const EdgeInsets.all(8.0),
+      color: Colors.teal.shade700,
+      alignment: Alignment.center,
+      child: Text('Hello World',
+          style: Theme.of(context)
+              .textTheme
+              .display1
+              .copyWith(color: Colors.white)),
+      foregroundDecoration: BoxDecoration(
+        image: DecorationImage(
+          image: NetworkImage('http://ww1.sinaimg.cn/large/610dc034jw1f7sszr81ewj20u011hgog.jpg'),
+          fit:BoxFit.fill,
+        ),
+      ),
+      transform: Matrix4.rotationZ(0.1),
+    );
+  }
+}
+```
+
+## 二、Row
+
+一个widget，用于在水平序列中显示其子项。
+要使子项扩展以填充可用的水平空间，要将子项填充在Expanded widget中。
+Row widget不会滚动（并且通常一个行widget中中的子项多于可用空间会报错）。 如果有一系列小部件并希望它们能够在没有足够空间的情况下滚动，考虑使用ListView。
+如果只有一个子widget，可以使用Align或Center来定位子widget。
+需要注意的是，如果一个Row widget中的内容或子widget超出可显示的区域，会显示报错，此时需要使用Expanded widget，使其可以自动换行显示。对于多个Expanded widget，可以使用flex属性决定每个widget分配空间的多少，类似Android中LinearLayout的gravity。
+
+```dart
+return new Row(
+  children: <Widget>[
+    const Expanded(
+      child: Text(
+        'Flutter\'s hot reload helps you quickly and easily experiment.',
+        style: TextStyle(fontSize: 12),
+        maxLines: 10,),
+      flex: 1,
+    ),
+    const Expanded(
+      child: Text(
+          'Flutter\'s hot reload helps you quickly and easily experiment.',
+          style: TextStyle(fontSize: 12),
+          maxLines: 10,),        flex: 2
+    ),
+    const Expanded(
+      child: Text(
+        'Flutter\'s hot reload helps you quickly and easily experiment.',
+        style: TextStyle(fontSize: 12),
+        maxLines: 10,),
+        flex: 1
+    ),
+  ],
+);
+```
+![Row效果](https://ftp.bmp.ovh/imgs/2020/05/ce2bdcaa31472da8.png)
+
+[Row的绘制策略链接](https://docs.flutter.io/flutter/widgets/Row-class.html)
+
+## 三、Column
+
+一个widget，用于在垂直序列中显示其子项。
+要使子项扩展以填充可用的垂直空间，要将子项填充在Expanded widget中。
+Column widget不会滚动（并且通常一个行widget中中的子项多于可用空间会报错）。如果有一系列小部件并希望它们能够在没有足够空间的情况下滚动，考虑使用ListView。
+如果只有一个子widget，可以使用Align或Center来定位子widget。
+
+- mainAxisAlignment 属性用于限制每个子widget相对于父widget的位置，距左、右，空隙均分，空隙在开头和结尾及每个widget中间均分，居中；
+- mainAxisSize 属性用于限制高度，如果为min，就是子widget的总高度，以子widget的高度为准，否则以约束的高度为准；
+- crossAxisAlignment：属性用于限制子widget横向的位置，居左，居右，居中等。
+
+```dart
+return new Column(
+  crossAxisAlignment: CrossAxisAlignment.end,
+  mainAxisSize: MainAxisSize.max,
+  mainAxisAlignment: MainAxisAlignment.spaceAround,
+  children: <Widget>[
+    Text(
+      'We move under cover and we move as one',
+      style: TextStyle(fontSize: 12),
+    ),
+    Text(
+      'Through the night, we have one shot to live another day',
+      style: TextStyle(fontSize: 12),
+    ),
+    Text(
+      'We cannot let a stray gunshot give us away',
+      style: TextStyle(fontSize: 12),
+    ),
+    Text(
+      'We will fight up close, seize the moment and stay in it',
+      style: TextStyle(fontSize: 12),
+    ),
+    Text(
+      'It’s either that or meet the business end of a bayonet',
+      style: TextStyle(fontSize: 12),
+    ),
+    Text(
+      'The code word is ‘Rochambeau,’ dig me?',
+      style: TextStyle(fontSize: 12),
+    ),
+    Text('Rochambeau!',
+        style:
+            DefaultTextStyle.of(context).style.apply(fontSizeFactor: 2.0)),
+  ],
+);
+```
+效果如下：
+![Column效果](https://ftp.bmp.ovh/imgs/2020/05/130005df4cadb85b.png)
+
+[详情见](https://docs.flutter.io/flutter/widgets/Column-class.html)
+
+## 四、Image
+
+用来显示图片的Widget。
+
+Widget提供几种初始化的方式，满足从不同渠道加载图片：
+`new Image, for obtaining an image from an ImageProvider.`
+`new Image.asset, for obtaining an image from an AssetBundle using a key.`
+`new Image.network, for obtaining an image from a URL.`
+`new Image.file, for obtaining an image from a File.`
+`new Image.memory, for obtaining an image from a Uint8List.`
+
+该widget支持以下图片格式：
+PEG, PNG, GIF, Animated GIF, WebP, Animated WebP, BMP, and WBMP。
+
+为了解决图片加载时的像素分辨率问题，指定加载图片的时候使用 AssetImage以及确保 MaterialApp, WidgetsApp, 或MediaQuery widget 在image widget树之上。
+
+## 五、Text
+
+用于展示文本。
+
+风格参数是可选的，当省略的时候，文本将会使用默认的风格参数DefaultTextStyle，如果设置风格参数TextStyle.inherit为true，那么设置的参数将会合并到DefaultTextStyle参数中，这个合并的动作是有效的，例如，设置文本加粗，但是还是会使用默认的字体和大小。
+例如：
+
+```dart
+Text(
+  'Hello, How are you?',
+  textAlign: TextAlign.center,
+  overflow: TextOverflow.ellipsis,
+  style: TextStyle(fontWeight: FontWeight.bold,fontSize: 12),
+),
+```
+
+对于想在一行文本中展示多种样式，可以使用Text.rich，如下：
+
+```dart
+const Text.rich(
+  TextSpan(
+    text: 'Hello', // default text style
+    children: <TextSpan>[
+      TextSpan(text: ' beautiful ', style: TextStyle(fontStyle: FontStyle.italic,decoration: TextDecoration.none)),
+      TextSpan(text: 'world', style: TextStyle(fontWeight: FontWeight.bold)),
+    ],
+  ),
+)
+```
+
+如果想让Text响应触摸事件，将Text放到 GestureDetector widget 里面，并响应onTap回调就行了。
+在一个material design的应用程序里面，最好使用FlatButton代替，如果不符合需求的话，至少使用LnkWell代替GestureDetector。
+对于富文本，使用 RichText widget，并为每个TextSpan指定一个 TextSpan.recognizer 来响应触摸事件。
+
+## 六、Icon
+通过字形来绘制图标，大概意思就是将 IconData中预定义的图形绘制到图标上。
+Icon widget不响应事件，如果有这个需求，可以使用IconButton。
+例如：
+```Icon(Icons.arrow_back,size: 48,color: Colors.white,)```
+
+
+## 七、IconButton
+
+一个material design 类型的图标按钮。
+
+一个icon按钮就是一张图片展示在一个Material widget上，并且可以通过填充颜色去响应触摸事件。
+图标按钮通常使用在AppBar.actions字段中，但是也可以在其他地方使用。
+如果onPressed回调函数返回为空，意味着按钮会被disable，并且不能响应触摸。
+图标按钮需要一个父Material widget包裹，对于点击区域，如果可能的话，至少是48个像素区域，不管实际的iconSize设置为多少，这样做是为了保证点击目标区域符合Material Design 设计的规范。alignment属性是控制icon图标自身在点击区域的位置。
+例如：
+
+```IconButton(icon: Icon(Icons.add),onPressed: null,alignment: Alignment.topCenter,)```
+
+
+## 八、RaisedButton
+
+一个material design类型的突起按钮
+
+当这种类型的按钮被点击的时候 Material.elevation属性的值会自增，当然这个属性基于Material widget。
+在大多数平面布局中使用凸起的按钮将突出显示，例如， 在繁忙的内容列表中, 在一个比较大的区域. Avoid using raised buttons on already-raised content such as dialogs or cards.
+避免将突出按钮使用在已经突出展示的内容中，比如对话框或卡片。
+如果onPressed回调函数设置为null，按钮将会被disable掉，并且默认设置成禁用颜色的平面按钮，即使尝试修改按钮的颜色，也不会生效，此时就要检查有没有设置onPressed回调了。
+如果需要泼墨效果响应点击，但是不想使用按钮，可以直接使用lnkWell。
+突起按钮
+凸起按钮的最小尺寸为88.0×36.0，可以使用Button Theme覆盖。
+
+```dart
+RaisedButton(onPressed: raisedButtonClicked,color: Colors.cyan,textTheme:ButtonTextTheme.primary,
+    child:Text("Clicked"),textColor: Colors.white,)
+```
+
+## 九、Scaffold 
+
+实现了一个基本的material design虚拟视图框架。
+
+这个类提供了接口用于展示抽屉视图，snack条，以及底部页面。为了展示snackbar或一个永久的底部页面，可以通过当前BuildContext作为参数的Scaffold.of方法获取ScaffoldState，并使用 他的ScaffoldState.showSnackBar 和ScaffoldState.showBottomSheet方法。
+
+下面这个例子展示了 Scaffold 下的AppBar,BottomAppBar,一个FloatingActionButton，主要的视图区域是一个设置了Scaffold 属性的居中文本，一个居中的FloatingActionButton，一个使用FloatingActionButtonLocation.centerDocked属性而设置的 BottomAppBar，这个按钮的回调与计数器自增相关。
+
+```dart
+import 'package:flutter/material.dart';
+
+void main() => runApp(MyApp());
+
+class MyApp extends StatelessWidget {
+  // This widget is the root of your application.
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Flutter Code Sample for material.Scaffold',
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+      ),
+      home: MyStatefulWidget(),
+    );
+  }
+}
+
+class MyStatefulWidget extends StatefulWidget {
+  MyStatefulWidget({Key key}) : super(key: key);
+
+  @override
+  _MyStatefulWidgetState createState() => _MyStatefulWidgetState();
+}
+
+class _MyStatefulWidgetState extends State<MyStatefulWidget> {
+  int _count = 0;
+
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Sample Code'),
+      ),
+      body: Center(
+        child: Text('You have pressed the button $_count times.'),
+      ),
+      bottomNavigationBar: BottomAppBar(
+        child: Container(
+          height: 50.0,
+        ),
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => setState(() {
+          _count++;
+        }),
+        tooltip: 'Increment Counter',
+        child: Icon(Icons.add),
+      ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
+    );
+  }
+}
+```
+
+## 十、AppBar
+
+一个material design的应用条。
+
+一个应用条由工具条和其他一个可能的widget组成，比如TabBar,一个FlexibleSpaceBar。典型的app条由一个或多个IconButton组成，并响应相同的动作，这些IconButtons通常在一个悬浮菜单中，用PopupMenuButton实现单选操作。
+AppBar典型的使用方式是在 Scaffold.appBar中，他将appBar放置在一个高度可变的widget中，并放在屏幕的顶部，对于一个滚动的appBar，可以使用 SliverAppBar，他嵌入一个AppBar在 CustomScrollView中用作裂片？。
+App展示了工具条，头，标签，动作，在底部之上，底部通常使用TabBar,如果一个flexibleSpace 被指定，他将会在工具条和底部bottom widget之间。下面这种图展示了appbar在从左到右语言环境下的排布：
+
+如果leading属性省略，但是appBar作为抽屉视图在scaffold中，那么一个按钮将会被放进来用于打开抽屉，另外，如果最近的Navigator 有路由，一个返回按钮 BackButton 将会替代这个leading的位置。这个属性可以通过设置automaticallyImplyLeading 为false关闭，在这种情况下，一个空的leading widget将会被拉伸，区域从开始到中间/标题widget之间。
+
+```dart
+return new AppBar(
+  leading: Icon(Icons.arrow_back),
+  title: Text('My Fancy Dress'),
+  actions: <Widget>[
+    IconButton(
+      icon: Icon(Icons.playlist_play),
+      tooltip: 'Air it',
+      onPressed: _airDress,
+    ),
+    IconButton(
+      icon: Icon(Icons.playlist_add),
+      tooltip: 'Restitch it',
+      onPressed: _restitchDress,
+    ),
+    IconButton(
+      icon: Icon(Icons.playlist_add_check),
+      tooltip: 'Repair it',
+      onPressed: _repairDress,
+    ),
+  ],
+);
+```
+
+## 十一、Placeholder 
+
+一个widget画了一个盒子(一块区域)，表示后续其他的widgte将会添加到这个盒子里面，对于预示目前这个接口还没有准备好是有用的。
+
+默认的，这个widget的大小跟随container的大小，如果在一个没有指定大小的区域，它会根据给定的fallbackWidth和fallbackHeight自行调整大小：
+```dart
+return new Placeholder(
+  color: Colors.cyan,
+  fallbackHeight: 320,
+  fallbackWidth: 480,
+);
+```

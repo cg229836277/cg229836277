@@ -1,0 +1,89 @@
+---
+layout: post
+title:  "Flutter界面间的组件共享"
+date:   2019-12-25 11:09:22 +0800
+categories: flutter
+---
+
+## Navigator
+
+> https://docs.flutter.io/flutter/widgets/Navigator-class.html
+
+### 背景
+
+移动端app一般通过全屏的屏幕或页面元素展示内容，在Flutter里面，这些元素被称作路由，可以通过 Navigator widget来管理这些路由。navigator管理一个堆栈中的路由对象，并提供方法去管理这些路由，比如 Navigator.push 和 Navigator.pop。
+在两个界面之间展示同一张图片，并在跳转的过程中添加Hero动画，当界面A和界面B同时定义了Hero widget，并且两个widget的tag相同，当界面A  push到界面B的时候，Hero动画就触发了。（https://docs.flutter.io/flutter/widgets/Hero-class.html）
+
+为了保证动画看起来衔接流畅，在两个界面里面的hero都必须明确定义，目标界面的widget，默认的，用来移动，当从路由A跳转到路由B的时候，路由B的hero widget替换路由A的hero widget，如果一个flightShuttleBuilder被提供，那么给定输出的widget将会在飞翔动画期间展示。
+在两个路由跳转的飞翔动画期间，都会被隐藏，不过placeholderBuilder能够用来展示一个自定义的widget，在动画跳转期间，这个widget会被放置在他们原来的位置。
+在跳转期间，路由A的widget位置被路由B的widget插入，当路由B回到路由A，跳转动画以另外一种方式呈现，另外一个路由里面最多只能有一个hero。
+
+### 示例
+
+```dart
+import 'package:flutter/material.dart';
+
+void main() => runApp(HeroApp());
+
+class HeroApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Transition Demo',
+      home: MainScreen(),
+    );
+  }
+}
+
+class MainScreen extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Main Screen'),
+      ),
+      body: GestureDetector(
+        child: Hero(
+          tag: 'imageHero',
+          placeholderBuilder: (context, child) {
+              return new Text("请稍等",style: new TextStyle(fontSize: 32),);
+          },
+          flightShuttleBuilder: (flightContext, animation, direction,
+              fromContext, toContext) {
+            return Icon(Icons.directions_subway, size: 150.0,);
+          },
+          child: Image.network(
+            'http://ww2.sinaimg.cn/large/610dc034jw1f9j7nvnwjdj20u00k0jsl.jpg',
+          ),
+        ),
+        onTap: () {
+          Navigator.push(context, MaterialPageRoute(builder: (_) {
+            return DetailScreen();
+          }));
+        },
+      ),
+    );
+  }
+}
+
+class DetailScreen extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: GestureDetector(
+        child: Center(
+          child: Hero(
+            tag: 'imageHero',
+            child: Image.network(
+              'http://ww1.sinaimg.cn/large/61e74233ly1feuogwvg27j20p00zkqe7.jpg',
+            ),
+          ),
+        ),
+        onTap: () {
+          Navigator.pop(context);
+        },
+      ),
+    );
+  }
+}
+```

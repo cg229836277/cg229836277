@@ -1,0 +1,718 @@
+---
+layout: post
+title:  "Flutter基础组件2"
+date:   2019-12-24 11:09:22 +0800
+categories: flutter
+---
+
+作为Android开发人员上手Flutter有几个比较重要的视图需要找到替代者。
+
+## 一、tab
+
+包含顶部和底部tab，在flutter中分别是：TabBarView和BottomNavigationBar
+
+### 1、TabBarView
+
+一个页视图当一个tab点击的时候展示一个特定的页面，典型的是结合了TabBar.
+如果 TabController 没有提供，那么必须提供一个DefaultTabController的父类。
+
+```dart
+import 'package:flutter/material.dart';
+
+class TabbedAppBarSample extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return new MaterialApp(
+      home: new DefaultTabController(
+        length: choices.length,
+        child: new Scaffold(
+          appBar: new AppBar(
+            title: const Text('Tabbed AppBar'),
+            bottom: new TabBar(
+              isScrollable: true,
+              tabs: choices.map((Choice choice) {
+                return new Tab(
+                  text: choice.title,
+                  icon: new Icon(choice.icon),
+                );
+              }).toList(),
+            ),
+          ),
+          body: new TabBarView(
+            children: choices.map((Choice choice) {
+              return new Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: new ChoiceCard(choice: choice),
+              );
+            }).toList(),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class Choice {
+  const Choice({ this.title, this.icon });
+  final String title;
+  final IconData icon;
+}
+
+const List<Choice> choices = const <Choice>[
+  const Choice(title: 'CAR', icon: Icons.directions_car),
+  const Choice(title: 'BICYCLE', icon: Icons.directions_bike),
+  const Choice(title: 'BOAT', icon: Icons.directions_boat),
+  const Choice(title: 'BUS', icon: Icons.directions_bus),
+  const Choice(title: 'TRAIN', icon: Icons.directions_railway),
+  const Choice(title: 'WALK', icon: Icons.directions_walk),
+];
+
+class ChoiceCard extends StatelessWidget {
+  const ChoiceCard({ Key key, this.choice }) : super(key: key);
+
+  final Choice choice;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextStyle textStyle = Theme.of(context).textTheme.display1;
+    return new Card(
+      color: Colors.white,
+      child: new Center(
+        child: new Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: <Widget>[
+            new Icon(choice.icon, size: 128.0, color: textStyle.color),
+            new Text(choice.title, style: textStyle),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+void main() {
+  runApp(new TabbedAppBarSample());
+}
+```
+
+### 2、BottomNavigationBar
+
+底部导航视图一般配合Scaffold使用，当BottomNavigationBar设置Scaffold.bottomNavigationBar变量的时候。
+底部导航视图使用type属性控制子项如何显示，不设置这个属性的时候，默认是 BottomNavigationBarType.fixed ，当子项少于四个的时候也是这个属性，其他情况使用BottomNavigationBarType.shifting，这个属性主要控制子项被选中时的颜色，设置为fixed就使用fixedcolor属性设置的颜色，没设置使用ThemeData.primaryColor，设置为shifting时，选中的item使用BottomNavigationBarItem.backgroundColor背景色，其他的为白色。
+
+```dart
+import 'package:flutter/material.dart';
+
+class MyHomePage extends StatefulWidget {
+  MyHomePage({Key key}) : super(key: key);
+
+  @override
+  _MyHomePageState createState() => _MyHomePageState();
+}
+
+class _MyHomePageState extends State<MyHomePage> {
+  int _selectedIndex = 1;
+  final _widgetOptions = [
+    Text('Index 0: Home'),
+    Text('Index 1: Business'),
+    Text('Index 2: School'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return new MaterialApp(
+        home: Scaffold(
+          appBar: AppBar(
+            title: Text('BottomNavigationBar Sample'),
+          ),
+          body: Center(
+            child: _widgetOptions.elementAt(_selectedIndex),
+          ),
+          bottomNavigationBar: BottomNavigationBar(
+            items: <BottomNavigationBarItem>[
+              BottomNavigationBarItem(
+                  icon: Icon(Icons.home), title: Text('Home')),
+              BottomNavigationBarItem(
+                  icon: Icon(Icons.business), title: Text('Business')),
+              BottomNavigationBarItem(
+                  icon: Icon(Icons.school), title: Text('School')),
+            ],
+            currentIndex: _selectedIndex,
+            fixedColor: Colors.deepPurple,
+            onTap: _onItemTapped,
+          ),
+        ),
+    );
+  }
+
+  void _onItemTapped(int index) {
+    setState(() {
+      _selectedIndex = index;
+    });
+  }
+}
+
+void main() {
+  runApp(new MyHomePage());
+}
+```
+
+## 二、Pop弹窗菜单PopupMenuButton
+
+展示一个菜单，当一个子项被选中时，onSelected函数被回调且菜单消失，选中的值通过回调函数传递。
+单个item的子widget或者一个icon其中的一个需要提供给子项，此时PopupMenuButton就像一个IconButton,但是如果都不提供的话，一个标准的icon将会创建。
+
+```dart
+import 'package:flutter/material.dart';
+
+enum WhyFarther { harder, smarter, selfStarter, tradingCharter }
+
+// This menu button widget updates a _selection field (of type WhyFarther,
+// not shown here).
+void main() {
+  runApp(new MaterialApp(
+    title: 'Flutter Tutorial',
+    home: new BasicAppBarSample(),
+  ));
+}
+
+class BasicAppBarSample extends StatefulWidget {
+  @override
+  _BasicAppBarSampleState createState() => new _BasicAppBarSampleState();
+}
+
+class _BasicAppBarSampleState extends State<BasicAppBarSample> {
+  WhyFarther choosedWhy = WhyFarther.harder;
+
+  void _select(WhyFarther wh) {
+    setState(() {
+      choosedWhy = wh;
+      print("choosed:" + wh.toString());
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return new Material(
+      child: PopupMenuButton<WhyFarther>(
+        onSelected: _select,
+        itemBuilder: (BuildContext context) => <PopupMenuEntry<WhyFarther>>[
+              const PopupMenuItem<WhyFarther>(
+                value: WhyFarther.harder,
+                child: Text('Working a lot harder'),
+              ),
+              const PopupMenuItem<WhyFarther>(
+                value: WhyFarther.smarter,
+                child: Text('Being a lot smarter'),
+              ),
+              const PopupMenuItem<WhyFarther>(
+                value: WhyFarther.selfStarter,
+                child: Text('Being a self-starter'),
+              ),
+              const PopupMenuItem<WhyFarther>(
+                value: WhyFarther.tradingCharter,
+                child: Text('Placed in charge of trading charter'),
+              ),
+            ],
+      ),
+    );
+  }
+}
+```
+
+## 三、TextField
+
+material design类型的输入框， onChanged 回调方法表示正在输入，onSubmitted 表示输入完成，标志是用户点击了输入键盘上的done。
+controller属性控制文本在输入框里面的展示，也可以控制文本选择以及排列区域。
+ decoration 用于修饰输入框底部的分割线，例如可以设置一个label或一个icon，如果设置为null的话，会将所有默认的装饰全部删除，如果装饰属性不为空，那么必须设置一个父类为Material的 widget。
+
+```dart
+import 'package:flutter/material.dart';
+
+void main() {
+  runApp(new MyAppBar());
+}
+
+class MyAppBar extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return new MaterialApp(
+      home: new TextFiledWidget(),
+    );
+  }
+}
+
+class TextFiledWidget extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return new Material(
+      child: TextField(
+        decoration: const InputDecoration(
+          icon: Icon(Icons.person),
+          hintText: 'What do people call you?',
+          labelText: 'Name *',
+        ),
+        onChanged: onInputChanged,
+        onSubmitted: onInputFinished,
+      ),
+    );
+  }
+
+  void onInputChanged(String result) {}
+
+  void onInputFinished(String result) {}
+}
+```
+
+## 四、对话框
+
+包含SimpleDialog和AlertDialog。
+
+### 1、SimpleDialog
+
+> A simple material design dialog.
+一个material design类型的单选框。
+
+> A simple dialog offers the user a choice between several options. A simple dialog has an optional title that is displayed above the choices.
+给用户在多个选项中提供单选，通过设置多个SimpleDialogOption widget来提供选择项，如果使用其他小部件提供选项，请参阅contentsPadding。
+
+```dart
+import 'package:flutter/material.dart';
+
+enum Department { treasury, state }
+
+void main() {
+  runApp(new MyAppBar());
+}
+
+class MyAppBar extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return new MaterialApp(
+      home: new TextFiledWidget(),
+    );
+  }
+}
+
+class TextFiledWidget extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return new Material(
+      child: SimpleDialog(
+        title: const Text('Select assignment'),
+        children: <Widget>[
+          SimpleDialogOption(
+            onPressed: () {
+              Navigator.pop(context, Department.treasury);
+            },
+            child: const Text('Treasury department'),
+          ),
+          SimpleDialogOption(
+            onPressed: () {
+              Navigator.pop(context, Department.state);
+            },
+            child: const Text('State department'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+```
+
+### 2、AlertDialog
+
+提示对话框，如果里面文本太多，导致显示不下，建议使用SingleChildScrollView滚动展示，
+但是，由于AlertDialog尝试使用其子项的内部维度来调整自身大小，因此使用惰性视图的小部件（如ListView，GridView和CustomScrollView）将不起作用。请考虑直接使用Dialog。
+
+```dart
+import 'package:flutter/material.dart';
+
+enum Department { treasury, state }
+
+void main() {
+  runApp(new MyAppBar());
+}
+
+class MyAppBar extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return new MaterialApp(
+      home: new TextFiledWidget(),
+    );
+  }
+}
+
+class TextFiledWidget extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return new Material(
+      child: AlertDialog(
+        title: Text('Rewind and remember'),
+        content: SingleChildScrollView(
+          child: ListBody(
+            children: <Widget>[
+              Text('You will never be satisfied.'),
+              Text('You\’re like me. I’m never satisfied.'),
+            ],
+          ),
+        ),
+        actions: <Widget>[
+          FlatButton(
+            child: Text('Regret'),
+            onPressed: () {
+              Navigator.of(context).pop();
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+```
+
+### 五、Card 
+
+卡片视图，属于material design风格。
+
+```dart
+import 'package:flutter/material.dart';
+
+void main() => runApp(MyApp());
+
+class MyApp extends StatelessWidget {
+  // This widget is the root of your application.
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Flutter Code Sample for material.Card',
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+      ),
+      home: MyStatelessWidget(),
+    );
+  }
+}
+
+class MyStatelessWidget extends StatelessWidget {
+  MyStatelessWidget({Key key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Card(
+        clipBehavior: Clip.antiAlias,
+        elevation: 24,
+        margin: EdgeInsets.all(12.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            const ListTile(
+              leading: Icon(Icons.album),
+              title: Text('The Enchanted Nightingale'),
+              subtitle: Text('Music by Julie Gable. Lyrics by Sidney Stein.'),
+            ),
+            ButtonTheme.bar(
+              // make buttons use the appropriate styles for cards
+              child: ButtonBar(
+                children: <Widget>[
+                  FlatButton(
+                    child: const Text('BUY TICKETS'),
+                    onPressed: () {
+                      /* ... */
+                    },
+                  ),
+                  FlatButton(
+                    child: const Text('LISTEN'),
+                    onPressed: () {
+                      /* ... */
+                    },
+                  ),
+                ],
+              ),
+            ),
+            const ListTile(
+              leading: Icon(Icons.android),
+              title: Text('Android mobile phone'),
+              subtitle: Text('are you good at android or ios.'),
+            ),
+            ButtonTheme.bar(
+              // make buttons use the appropriate styles for cards
+              child: ButtonBar(
+                children: <Widget>[
+                  FlatButton(
+                    child: const Text('ANDROID'),
+                    onPressed: () {
+                      /* ... */
+                    },
+                  ),
+                  FlatButton(
+                    child: const Text('IOS'),
+                    onPressed: () {
+                      /* ... */
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+```
+
+## 六、ListView
+
+> 纯手工翻译自：https://docs.flutter.io/flutter/widgets/ListView-class.html
+
+### 1、ListView有四个构造函数
+
+- 默认的构造函数需要显式声明一个List<Widget>的子item，这个构造函数主要用来展示一个数量不多的list子项，前提是这些子项都在可见的视图范围内干活。
+- ListView.builder构造函数需要 IndexedWidgetBuilder属性，这个属性用来满足子项的一些需求。这个构造函数适合于大量或无限量的子项，并且这个builder会被真正显示在界面的子项调用。
+- ListView.separated 构造函数包含了两个IndexedWidgetBuilders，这个builder的itemBuilder用于定制子项，separatorBuilder 用于在两个子项之间做分割，这个构造函数用于数量不确定的子项。
+- ListView.custom包含了一个SliverChildDelegate，提供了自定义子项模板的能力，例如一个 SliverChildDelegate可以控制算法去创建一个没有显示的子项的大小。
+默认的，listView会自动为列表滚动的末端设置偏移，这样做是为了避免部分通过MediaQuery设置的偏移产生冲突，可以重载padding属性，并设置为0来disable这个属性。
+
+### 2、子项生命周期
+
+#### 1）创建
+当子项呈现在列表界面上，可见子项的元素，状态，渲染的对象将会被懒加载（例如使用默认的listview构造函数）或者懒加载所有的子项（例如使用ListView.builder构造函数）。
+#### 2）销毁
+当一个子项滑出屏幕，与子项相关的子视图，状态，渲染对象将会被销毁，当滑动回来时，一个新的子项在列表相同位置将会被懒加载重建，这个子项有着新的元素，状态，渲染对象。
+#### 3）销毁延迟
+为了保存那些滑出屏幕子项的状态，以下选项可以做到：
+将不重要的UI状态驱动的业务逻辑的所有权从列表子子树移除。 例如，如果列表包含一些网络缓存的帖子回复，则将帖子列表和回复序号存储在列表外的数据模型中。 让列表UI子树可以从真实源模型对象轻松地重新创建。 在子widget的子树中使用StatefulWidgets仅存储瞬时UI状态。
+让KeepAlive成为子项widget的的根widget，表示子项的状态需要保存。KeepAlive widget能够标记子项的子树视图的顶部渲染对象需要保活，当子树视图顶部滑出屏幕，列表保存子项的渲染对象，当然了，这个渲染对象包含子元素和状态，这些保活的子项在一个缓存列表中而不是销毁。当滑回的时候，子项的渲染对象会重绘，如果子项在临时列表中没有被标记为脏数据。
+
+使用AutomaticKeepAlive widget，当addAutomaticKeepAlives 设置为true的时候，对于KeepAlive而言，是当子项滑出屏幕的时候会无条件的缓存子项的元素，而AutomaticKeepAlive 会根据后续子item的子树业务逻辑来距顶是否缓存。
+例如， EditableText  widget会让获取输入光标的子项保持存活，而那些没有获取焦点且后续子视图没有通过KeepAliveNotification来保持存活的通知，那么这个子项在滑出屏幕时会被销毁。
+AutomaticKeepAlive的子树一般通过AutomaticKeepAliveClientMixin标记成存活对象，然后实现wantKeepAlive 的getter方法然后调用updateKeepAlive。
+#### 4）转到CustomScrollView
+一个ListView基于CustomScrollView，通过设置单个SliverList给CustomScrollView.slivers属性。
+如果ListView不满足需求，例如滚动视图包含一个列表和网格视图，或者列表结合一个SliverAppBar等，可以直接使用CustomScrollView替代ListView。
+
+ListView的 key, scrollDirection, reverse, controller, primary, physics, 和shrinkWrap匹配属性与 CustomScrollView定义的相同。
+CustomScrollView.slivers 属性应该是一个列表要么包含SliverList或包含 SliverFixedExtentList，对于前者，如果在ListView里面如果itemExtend为空，对于后者，如果itemExtent为空。
+ListView的childrenDelegate属性对应CustomScrollView的 SliverList.delegate (或SliverFixedExtentList.delegate) 属性。创建一个Listview构造函数子项参数childrenDelegate对应 SliverChildListDelegate的构造函数是相同的参数。
+创建ListView.builder构造函数的itemBuilder和childCount参数与SliverChildBuilderDelegate的childrenDelegate参数是对应的。
+padding偏移参数对应CustomScrollView.slivers中的SliverPaddings用来替代列表本身，可以使用SliverList成为SliverPadding的子项。
+
+CustomScrollView不会自动避免来自 MediaQuery的干扰，像ListView一样，为了重新产生这种行为，将SliverSafeArea包含在slivers中。
+一旦代码移植使用 CustomScrollView，其他的slivers，例如SliverGrid 或 SliverAppBar可以放到 CustomScrollView.slivers 中。
+
+### 3、ListView示例
+
+[官方的例子在这里](https://flutter.io/docs/catalog/samples/expansion-tile-sample])
+
+这里稍微改造一下：
+
+```dart
+import 'package:flutter/material.dart';
+
+class ListSample extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      home: Scaffold(
+        appBar: AppBar(
+          title: const Text('ExpansionTile'),
+        ),
+        body: ListView.builder(
+          itemBuilder: (BuildContext context, int index) =>
+              EntryItem(data[index]),
+          itemCount: data.length,
+        ),
+      ),
+    );
+  }
+}
+
+// One entry in the multilevel list displayed by this app.
+class Entry {
+  Entry(this.title);
+
+  final String title;
+}
+
+// The entire multilevel list displayed by this app.
+final List<Entry> data = <Entry>[
+  Entry(
+    'Chapter A',
+  ),
+  Entry(
+    'Chapter B',
+  ),
+  Entry(
+    'Chapter C',
+  ),
+];
+
+// Displays one Entry. If the entry has children then it's displayed
+// with an ExpansionTile.
+class EntryItem extends StatelessWidget {
+  const EntryItem(this.entry);
+
+  final Entry entry;
+
+  Widget _buildTiles(Entry root) {
+    if (root.title.isEmpty) return ListTile(title: Text(root.title));
+    return ListTile(
+      key: PageStorageKey<Entry>(root),
+      title: Text(root.title),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _buildTiles(entry);
+  }
+}
+
+void main() {
+  runApp(ListSample());
+}
+```
+
+### 4、CustomScrollView示例
+
+```dart
+import 'package:flutter/material.dart';
+
+class CustomListViewSample extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return new MaterialApp(
+        home: CustomScrollView(
+      scrollDirection: Axis.vertical,
+      slivers: <Widget>[
+        const SliverAppBar(
+          pinned: true,
+          expandedHeight: 250.0,
+          flexibleSpace: FlexibleSpaceBar(
+            title: Text(
+              'Demo',
+              textDirection: TextDirection.ltr,
+            ),
+          ),
+        ),
+        SliverGrid(
+          gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+            maxCrossAxisExtent: 200.0,
+            mainAxisSpacing: 10.0,
+            crossAxisSpacing: 10.0,
+            childAspectRatio: 4.0,
+          ),
+          delegate: SliverChildBuilderDelegate(
+            (BuildContext context, int index) {
+              return Container(
+                alignment: Alignment.center,
+                color: Colors.teal[100 * (index % 9)],
+                child: Text(
+                  'grid item $index',
+                  textDirection: TextDirection.ltr,
+                  style: new TextStyle(fontSize: 8),
+                ),
+              );
+            },
+            childCount: 20,
+          ),
+        ),
+        SliverFixedExtentList(
+          itemExtent: 100.0,
+          delegate: SliverChildBuilderDelegate(
+            (BuildContext context, int index) {
+              return Container(
+                alignment: Alignment.center,
+                color: Colors.lightBlue[100 * (index % 9)],
+                child: Text(
+                  'list item $index',
+                  textDirection: TextDirection.ltr,
+                  style: new TextStyle(fontSize: 10),
+                ),
+              );
+            },
+            childCount: 20,
+          ),
+        ),
+      ],
+    ));
+  }
+}
+
+void main() {
+  runApp(CustomListViewSample());
+}
+```
+
+## 七、ScrollView
+
+可滚动的widget有三部分构成：
+- 一个可滚动的widget，会监听各种各样用户的手势动作，已经完成对滚动的反馈。
+- 一个视窗widget，例如Viewport或ShrinkWrappingViewport，它通过在滚动视图中仅显示部分widget来实现滚动的可视化设计。
+- 一个或多个条目，它们是可以组合以创建各种滚动效果的widget，例如列表，网格和扩展标题。
+
+ScrollView通过可滚动和viewport以及通过延迟创建slivers来编排这些子块，
+controller的ScrollController.initialScrollOffset属性来控制 scroll view的初始偏移量。
+示例如下：
+
+```dart
+import 'package:flutter/material.dart';
+
+class ScrollView extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return new Material(
+        child: new Container(
+            child: new SingleChildScrollView(
+                child: new ConstrainedBox(
+                  constraints: new BoxConstraints(),
+                  child: new Column(children: <Widget>[
+                    new Image.network(
+                      'http://ww3.sinaimg.cn/large/610dc034jw1f7rmrmrscrj20u011hgp1.jpg',
+                    ),
+                    new Container(
+                      padding:
+                      EdgeInsets.only(left: 16.0, right: 16.0, top: 16.0, bottom: 16.0),
+                      color: Colors.grey,
+                      child: new Text(
+                        'Cast Light life style Here',
+                        textDirection: TextDirection.ltr,
+                        style: new TextStyle(
+                          fontSize: 40.0,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black,
+                        ),
+                      ),
+                    ),
+                    new Container(
+                      child: new Text(
+                        'Hi There ? this is sample plaid app using flutter sdk and dart programming language, devceloper is Hammad Tariq'
+                            'this is sample Flutter app example Code'
+                            'Flutter Column Widget scrollable using SingleChildScrollView'
+                            'I am just loving Flutter SDK'
+                            'Flutter scrollview example using Single Child Scroll View'
+                            'flutter fixing bottom overflow by xx pixels in flutter'
+                            'Flutter scrollable layout example'
+                            'Flutter app SingleChildScrollView Example ',
+                        textDirection: TextDirection.ltr,
+                        style: new TextStyle(
+                          fontSize: 20.0,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.pink,
+                        ),
+                      ),
+                    )
+                  ]),
+                ))));
+  }
+}
+
+
+void main() {
+  runApp(ScrollView());
+}
+```
+
