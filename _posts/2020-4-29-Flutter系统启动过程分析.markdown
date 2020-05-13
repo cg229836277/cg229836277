@@ -1,0 +1,977 @@
+---
+layout: post
+title:  "Flutter系统启动过程分析"
+date:   2020-4-29 11:09:22 +0800
+categories: flutter
+---
+
+# 启动过程分析
+原图地址是：https://ftp.bmp.ovh/imgs/2020/04/f92a2d6c47bcf3f6.jpg
+
+![https://ftp.bmp.ovh/imgs/2020/04/f92a2d6c47bcf3f6.jpg](https://ftp.bmp.ovh/imgs/2020/04/f92a2d6c47bcf3f6.jpg)
+
+## 1、 初始化
+一般的，都有一个入口Activity，这个Activity继承自FlutterActivity。
+
+从入口Activity的oncreate方法开始分析，首先调用`FlutterMain.startInitialization(this)`，如果我们自定义了Application（FlutterApplication），可以在Application的onCreate方法中调用。
+
+
+startInitialization最终会调用到FlutterLoader的startInitialization方法，在这个方法中主要干了一下几件事：
+- 初始化系统配置
+- 在debug或JIT模式下复制assert文件夹下的文件到data目录下。从apk包的assets目录下，将vm_snapshot_data,isolate_snapshot_data,kernel_blob.bin文件复制到/data/data/package name/app_flutter/flutter_assets/目录下。
+- 加载libflutter.so库
+- 计算初始化时间，并传递到native层
+
+**初始化操作为之后运行准备了flutter环境，也准备好了运行所需要的资源**
+
+## 2、创建FlutterView
+创建过程中比较重要的几行代码如下：
+
+> io\flutter\view\FlutterView.java
+
+```java
+public FlutterView(Context context, AttributeSet attrs, FlutterNativeView nativeView) {
+    mNativeView = new FlutterNativeView(activity.getApplicationContext());
+    mNativeView.attachViewAndActivity(this, activity);
+    mSurfaceCallback = new SurfaceHolder.Callback() {
+            @Override
+            public void surfaceCreated(SurfaceHolder holder) {
+                mNativeView.getFlutterJNI().onSurfaceCreated(holder.getSurface());
+            }
+
+            @Override
+            public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
+                mNativeView.getFlutterJNI().onSurfaceChanged(width, height);
+            }
+
+            @Override
+            public void surfaceDestroyed(SurfaceHolder holder) {
+                mNativeView.getFlutterJNI().onSurfaceDestroyed();
+            }
+        };
+}
+```
+
+其中涉及`FlutterActivity`，`FlutterView`，`FlutterNativeView`，`FlutterActivityDelegate`，`FlutterJNI`这几个主要的类。
+
+- FlutterActivity主要处理各个生命周期以及各种系统回调。
+- FlutterView其实是一个SurfaceView，在SurfaceHolder.Callback中处理View的各个状态，这关系到整个界面的展现。
+- FlutterNativeView其实不是个View，只是一个中间人。因为他持有FlutterJNI和DartExecutor对象，将View的状态和消息传递到native层
+- FlutterActivityDelegate，代理。创建了FlutterView和FlutterNativeView，然后将Activity的声明周期和各种回调给到FlutterView处理
+- FlutterJNI，被FlutterView调用，然后调用native代码，并接收native的回调
+
+### 2.1 创建FlutterNativeView
+主要的几行代码如下：
+
+> io\flutter\view\FlutterNativeView.java
+
+```java
+public FlutterNativeView(@NonNull Context context, boolean isBackgroundView) {
+    mContext = context;
+    mPluginRegistry = new FlutterPluginRegistry(this, context);
+    mFlutterJNI = new FlutterJNI();
+    mFlutterJNI.addIsDisplayingFlutterUiListener(flutterUiDisplayListener);
+    this.dartExecutor = new DartExecutor(mFlutterJNI, context.getAssets());
+    mFlutterJNI.addEngineLifecycleListener(new EngineLifecycleListenerImpl());
+    attach(this, isBackgroundView);
+}
+```
+#### 2.1.1 先持有FlutterJNI对象，后续用于与native交互
+#### 2.1.2 attach
+
+最终调用到了FlutterJNI的attachToNative方法，并调用native的nativeAttach方法。看看这个nativeAttach方法注册的地方：
+
+> shell\platform\android\platform_view_android_jni.cc
+
+```c++
+{
+  .name = "nativeAttach",
+  .signature = "(Lio/flutter/embedding/engine/FlutterJNI;Z)J",
+  .fnPtr = reinterpret_cast<void*>(&AttachJNI),
+}
+```
+被注册到了AttachJNI方法，看看这个方法：
+
+> shell\platform\android\platform_view_android_jni.cc
+
+```c++
+static jlong AttachJNI(JNIEnv* env,
+                       jclass clazz,
+                       jobject flutterJNI,
+                       jboolean is_background_view) {
+  fml::jni::JavaObjectWeakGlobalRef java_object(env, flutterJNI);
+  auto shell_holder = std::make_unique<AndroidShellHolder>(
+      FlutterMain::Get().GetSettings(), java_object, is_background_view);
+  if (shell_holder->IsValid()) {
+    return reinterpret_cast<jlong>(shell_holder.release());
+  } else {
+    return 0;
+  }
+}
+```
+
+这里初始化构造函数`AndroidShellHolder`。
+#### 2.1.3 AndroidShellHolder
+初始化过程中比较重要的代码如下：
+
+> shell\platform\android\android_shell_holder.cc
+
+```c++
+AndroidShellHolder::AndroidShellHolder(){
+    thread_host_ = {thread_label, ThreadHost::Type::UI | ThreadHost::Type::GPU | ThreadHost::Type::IO};
+    Shell::CreateCallback<PlatformView> on_create_platform_view = std::make_unique<PlatformViewAndroid>(
+              shell,                   // delegate
+              shell.GetTaskRunners(),  // task runners
+              java_object,             // java object handle for JNI interop
+              shell.GetSettings().enable_software_rendering  // use software rendering
+    ); 
+    Shell::CreateCallback<Rasterizer> on_create_rasterizer = [](Shell& shell) {
+        return std::make_unique<Rasterizer>(shell, shell.GetTaskRunners());
+    };
+    fml::RefPtr<fml::TaskRunner> platform_runner = fml::MessageLoop::GetCurrent().GetTaskRunner();
+    fml::RefPtr<fml::TaskRunner> gpu_runner = thread_host_.gpu_thread->GetTaskRunner();
+    fml::RefPtr<fml::TaskRunner> ui_runner = thread_host_.ui_thread->GetTaskRunner();
+    fml::RefPtr<fml::TaskRunner> io_runner = thread_host_.io_thread->GetTaskRunner();
+    
+    flutter::TaskRunners task_runners(thread_label,     // label
+                                    platform_runner,  // platform
+                                    gpu_runner,       // raster
+                                    ui_runner,        // ui
+                                    io_runner         // io
+    );
+    shell_ = Shell::Create(task_runners,        // task runners
+                    GetDefaultWindowData(),   // window data
+                    settings_,                // settings
+                    on_create_platform_view,  // platform view create callback
+                    on_create_rasterizer      // rasterizer create callback
+    );
+    task_runners.GetGPUTaskRunner()->PostTask([]() {});
+    task_runners.GetUITaskRunner()->PostTask([]() {)};
+}
+```
+这个类比较重要，可以分几个部分解析：
+- 1、thread_host_是一个ThreadHost结构体的对象，是platform_thread，ui_thread，gpu_thread，io_thread这个四个线程的集合。
+
+进一步查看可以发现Thread类持有一个TaskRunner对象。
+
+- 2、PlatformViewAndroid，第二步调用初始化构造函数，创建一个on_create_platform_view 对象，这个类继承自PlatformView，做平台View的初始化工作
+- 3、四个TaskRunner,看看他的初始化：
+
+**Thread初始化**
+
+> shell\platform\fuchsia\flutter\thread.cc
+
+```c++
+Thread::Thread(const std::string& name) : joined_(false) {
+    fml::RefPtr<fml::TaskRunner> runner;
+    thread_ = std::make_unique<std::thread>([&latch, &runner, name]() -> void {
+        SetCurrentThreadName(name);
+        fml::MessageLoop::EnsureInitializedForCurrentThread();
+        auto& loop = MessageLoop::GetCurrent();
+        runner = loop.GetTaskRunner();
+        latch.Signal();
+        loop.Run();
+    });
+}
+```
+在EnsureInitializedForCurrentThread方法中会初始化MessageLoop构造函数，然后获取一个loop对象，从这个loop对象里获取TaskRunner。
+
+**MessageLoop构造函数**
+
+如下：
+
+> fml\message_loop.cc
+
+```c++
+MessageLoop::MessageLoop()
+    : loop_(MessageLoopImpl::Create()),
+      task_runner_(fml::MakeRefCounted<fml::TaskRunner>(loop_)) {
+}
+```
+可见此时初始化了一个MessageLoopImpl构造函数。
+
+**MessageLoopImpl构造函数**
+
+> fml\message_loop_impl.cc
+
+```c++
+fml::RefPtr<MessageLoopImpl> MessageLoopImpl::Create() {
+#if OS_MACOSX
+  return fml::MakeRefCounted<MessageLoopDarwin>();
+#elif OS_ANDROID
+  return fml::MakeRefCounted<MessageLoopAndroid>();
+#elif OS_FUCHSIA
+  return fml::MakeRefCounted<MessageLoopFuchsia>();
+#elif OS_LINUX
+  return fml::MakeRefCounted<MessageLoopLinux>();
+#elif OS_WIN
+  return fml::MakeRefCounted<MessageLoopWin>();
+#else
+  return nullptr;
+#endif
+}
+```
+以MessageLoopAndroid为例，MessageLoopAndroid的父类是MessageLoopImpl。
+
+**MessageLoopImpl构造函数**
+
+如下：
+
+> fml\message_loop_impl.cc
+
+```c++
+MessageLoopImpl::MessageLoopImpl()
+    : task_queue_(MessageLoopTaskQueues::GetInstance()),
+      queue_id_(task_queue_->CreateTaskQueue()),
+      terminated_(false) {
+  task_queue_->SetWakeable(queue_id_, this);
+}
+```
+
+这里可以看到MessageLoopImpl创建了消息队列。
+
+> fml\platform\android\message_loop_android.cc
+
+```c++
+MessageLoopAndroid::MessageLoopAndroid(){
+    int add_result = ::ALooper_addFd(looper_.get(),          // looper
+                               timer_fd_.get(),        // fd
+                               ALOOPER_POLL_CALLBACK,  // ident
+                               kWakeEvents,            // events
+                               read_event_fd,          // callback
+                               this                    // baton
+  );
+}
+```
+初始化完成之后，有一个loop.run方法,实际上调用的是对应平台的Run方法：
+
+> fml\platform\android\message_loop_android.cc
+
+```c++
+void MessageLoopAndroid::Run() {
+  running_ = true;
+  while (running_) {
+    int result = ::ALooper_pollOnce(-1,  //infinite timeout
+        nullptr,  // out fd,
+        nullptr,  // out events,
+        nullptr   // out data
+    );
+  }
+}
+```
+> 这里运用了linux的poll机制。
+
+可以看到这里循环等待消息处理。
+
+接下来看看`runner = loop.GetTaskRunner()`方法，要探究一下这个TaskRunner是怎么初始化的。
+
+再回到**MessageLoop构造函数**，还是之前贴的代码，可以看到有一行代码，构造函数的初始化成员变量，如下：
+> fml\message_loop.cc
+```c++
+task_runner_(fml::MakeRefCounted<fml::TaskRunner>(loop_))
+```
+这个loop_实际是MessageLoopImpl类型，而GetTaskRunner()方法定义在MessageLoop类中，返回的就是task_runner_。
+
+可见TaskRunner无非就是持有一个loop对象，并将task提交给MessageLoopImpl执行。而从消息队列中取对象执行的时候是在每一个对应的线程中。
+
+#### 2.1.4 Shell::Create
+这个方法也很重要，因为在这里我们可以看到他初始化了Engine。
+
+直接看比较重要的两个初始化构造函数：
+
+第一个：
+
+```c++
+std::unique_ptr<Shell> Shell::Create(){
+    auto vm = DartVMRef::Create(settings);
+    auto vm_data = vm->GetVMData();
+}
+```
+
+在这里启动Dart虚拟机：
+
+```c++
+DartVMRef DartVMRef::Create(Settings settings,
+        fml::RefPtr<DartSnapshot> vm_snapshot,
+        fml::RefPtr<DartSnapshot> isolate_snapshot) {
+    if (auto vm = gVM.lock()) {
+        return DartVMRef{std::move(vm)};
+    }
+    auto vm = DartVM::Create(std::move(settings),  //
+        std::move(vm_snapshot),       //
+        std::move(isolate_snapshot),  //
+        isolate_name_server           //
+    );
+    return DartVMRef{std::move(vm)};
+}
+```
+
+如果已经存在一个vm的对象就直接返回，否则创建一个：
+
+```c++
+std::shared_ptr<DartVM> DartVM::Create(){
+    auto vm_data = DartVMData::Create(settings, //
+        std::move(vm_snapshot),      //
+        std::move(isolate_snapshot)  //
+  );
+    return std::shared_ptr<DartVM>(
+        new DartVM(std::move(vm_data), std::move(isolate_name_server)));
+}
+```
+
+先创建DartVMData类型对象，看看是怎么创建的：
+
+```c++
+std::shared_ptr<const DartVMData> DartVMData::Create(
+    Settings settings,
+    fml::RefPtr<DartSnapshot> vm_snapshot,
+    fml::RefPtr<DartSnapshot> isolate_snapshot) {
+    if (!vm_snapshot || !vm_snapshot->IsValid()) {
+        vm_snapshot = DartSnapshot::VMSnapshotFromSettings(settings);
+    }
+    if (!isolate_snapshot || !isolate_snapshot->IsValid()) {
+        isolate_snapshot = DartSnapshot::IsolateSnapshotFromSettings(settings);
+    }
+    return std::shared_ptr<const DartVMData>(new DartVMData(
+        std::move(settings),         //
+        std::move(vm_snapshot),      //
+        std::move(isolate_snapshot)  //
+    ));
+}
+```
+
+这里的代码比较核心，因为我们在应用层写的dart代码能够运行起来，主要依靠这两个对象。一个是跟VM有关的叫core snapshot，一个是与isolate有关的，叫isolate snapshot。
+初始化DartVMData工作完成之后，返回他的对象给DartVM。
+
+自此，DartVM对象算是建立起来了，并启动了VM虚拟机。
+
+第二个：
+
+```c++
+std::unique_ptr<Shell> Shell::Create(){
+    fml::AutoResetWaitableEvent latch;
+    std::unique_ptr<Shell> shell;
+    fml::TaskRunner::RunNowOrPostTask(
+    task_runners.GetPlatformTaskRunner(),
+    fml::MakeCopyable([&latch,                            //
+        vm = std::move(vm),                              //
+        &shell,                                          //
+        task_runners = std::move(task_runners),          //
+        window_data,                                     //
+        settings,                                        //
+        isolate_snapshot = std::move(isolate_snapshot),  //
+        on_create_platform_view,                         //
+        on_create_rasterizer                             //
+    ]() mutable {
+        shell = CreateShellOnPlatformThread(
+            std::move(vm),
+            std::move(task_runners),      //
+            window_data,                  //
+            settings,                     //
+            std::move(isolate_snapshot),  //
+            on_create_platform_view,      //
+            on_create_rasterizer          //
+        );
+        latch.Signal();
+      }));
+  latch.Wait();
+  return shell;
+}
+```
+
+`AutoResetWaitableEvent`其实是一个线程安全的消息同步处理类。当调用Signal方法时表示解除阻塞，返回数据；当调用Wait方法的时候表示阻塞当前消息，等待返回。
+
+这里主要看看CreateShellOnPlatformThread方法：
+
+```c++
+std::unique_ptr<Shell> Shell::CreateShellOnPlatformThread(){
+    auto shell = std::unique_ptr<Shell>(new Shell(std::move(vm), task_runners, settings));
+    auto engine_future = engine_promise.get_future();
+    fml::TaskRunner::RunNowOrPostTask(
+        shell->GetTaskRunners().GetUITaskRunner(),
+        fml::MakeCopyable([&engine_promise, //
+        shell = shell.get(),                //
+        &dispatcher_maker,                  //
+        &window_data,                       //
+        isolate_snapshot = std::move(isolate_snapshot),  //
+        vsync_waiter = std::move(vsync_waiter),          //
+        &weak_io_manager_future,                         //
+        &snapshot_delegate_future,                       //
+        &unref_queue_future                              //
+  ]() mutable {
+        engine_promise.set_value(std::make_unique<Engine>(
+            *shell,                         //
+            dispatcher_maker,               //
+            *shell->GetDartVM(),            //
+            std::move(isolate_snapshot),    //
+            task_runners,                   //
+            window_data,                    //
+            shell->GetSettings(),           //
+            std::move(animator),            //
+            weak_io_manager_future.get(),   //
+            unref_queue_future.get(),       //
+            snapshot_delegate_future.get()  //
+            ));
+      }));
+      return shell;
+}
+```
+
+到这里可以看到开始对Engine初始化了。看看Engine类的代码注释：
+> Engine是Shell的一个组件，并通过UI TaskRunner创建。他负责管理根isolate的需求任务以及这些isolate的运行时。Engine只能在UI TaskRunner里面被创建，调用，回收。
+>
+> flutter应用的根isolate获取窗口的绑定对象，通过这些对象，根isolate可以调度帧，提交视图层级渲染，请求图片解压缩，并将这些图片提交给GPU等。非根isolate不具备以上的那些能力，而是活在VM虚拟机管理的线程池中。
+> 
+> Engine负责根isolate的整个生命周期，当engine被回收的时候，他的所有者（Shell）假设根isolate已经关闭了并且将适合的资源回收，然而一个Engine只能持有一个根isolate单实例，一旦有请求，engine可以将这个根isolate重启。这也是为什么冷启动开发场景被支持的原因。
+>
+> Engine被初始化创建的时候，根isolate就被创建了，但是并不直接运行起来，只有等到Engine::Run被调用的时候，才会运行起来。
+
+看看Engine的初始化：
+
+> shell\common\engine.cc
+
+```c++
+Engine::Engine(Delegate& delegate,
+               const PointerDataDispatcherMaker& dispatcher_maker,
+               DartVM& vm,
+               fml::RefPtr<const DartSnapshot> isolate_snapshot,
+               TaskRunners task_runners,
+               const WindowData window_data,
+               Settings settings,
+               std::unique_ptr<Animator> animator,
+               fml::WeakPtr<IOManager> io_manager,
+               fml::RefPtr<SkiaUnrefQueue> unref_queue,
+               fml::WeakPtr<SnapshotDelegate> snapshot_delegate){
+      runtime_controller_ = std::make_unique<RuntimeController>(
+      *this,                        // runtime delegate
+      &vm,                          // VM
+      std::move(isolate_snapshot),  // isolate snapshot
+      task_runners_,                // task runners
+      std::move(snapshot_delegate),
+      std::move(io_manager),                 // io manager
+      std::move(unref_queue),                // Skia unref queue
+      image_decoder_.GetWeakPtr(),           // image decoder
+      settings_.advisory_script_uri,         // advisory script uri
+      settings_.advisory_script_entrypoint,  // advisory script entrypoint
+      settings_.idle_notification_callback,  // idle notification callback
+      window_data,                           // window data
+      settings_.isolate_create_callback,     // isolate create callback
+      settings_.isolate_shutdown_callback,   // isolate shutdown callback
+      settings_.persistent_isolate_data      // persistent isolate data
+  );
+}
+```
+这里RuntimeController被初始化，看看他的构造函数：
+
+> runtime\runtime_controller.cc
+
+```c++
+RuntimeController::RuntimeController(){
+auto strong_root_isolate = DartIsolate::CreateRootIsolate(
+        vm_->GetVMData()->GetSettings(),  //
+        isolate_snapshot_,                //
+        task_runners_,                    //
+        std::make_unique<Window>(this),   //
+        snapshot_delegate_,               //
+        io_manager_,                      //
+        unref_queue_,                     //
+        image_decoder_,                   //
+        p_advisory_script_uri,            //
+        p_advisory_script_entrypoint,     //
+        nullptr,                          //
+        isolate_create_callback_,         //
+        isolate_shutdown_callback_        //
+    ).lock();
+}
+```
+
+创建引擎的同时创建根isolate。
+
+> runtime\dart_isolate.cc
+
+```c++
+std::weak_ptr<DartIsolate> DartIsolate::CreateRootIsolate(){
+    auto isolate_group_data = std::make_unique<std::shared_ptr<DartIsolateGroupData>>(
+        std::shared_ptr<DartIsolateGroupData>(new DartIsolateGroupData(
+            settings,                     // settings
+            std::move(isolate_snapshot),  // isolate snapshot
+            advisory_script_uri,          // advisory URI
+            advisory_script_entrypoint,   // advisory entrypoint
+            nullptr,                      // child isolate preparer
+            isolate_create_callback,      // isolate create callback
+            isolate_shutdown_callback     // isolate shutdown callback
+    )));
+
+    auto isolate_data = std::make_unique<std::shared_ptr<DartIsolate>>(
+        std::shared_ptr<DartIsolate>(new DartIsolate(
+            settings,                      // settings
+            task_runners,                  // task runners
+            std::move(snapshot_delegate),  // snapshot delegate
+            std::move(io_manager),         // IO manager
+            std::move(unref_queue),        // Skia unref queue
+            std::move(image_decoder),      // Image Decoder
+            advisory_script_uri,           // advisory URI
+            advisory_script_entrypoint,    // advisory entrypoint
+            true                           // is_root_isolate
+    )));
+    DartErrorString error;
+    Dart_Isolate vm_isolate = CreateDartIsolateGroup(
+        std::move(isolate_group_data),
+        std::move(isolate_data), 
+        flags, 
+        error.error());
+    std::shared_ptr<DartIsolate>* root_isolate_data = static_cast<std::shared_ptr<DartIsolate>*>(Dart_IsolateData(vm_isolate));
+
+    (*root_isolate_data)->SetWindow(std::move(window));
+
+    return (*root_isolate_data)->GetWeakIsolatePtr();
+}
+```
+
+这里先为DartIsolateGroup创建组数据，然后为DartIsolateGroup创建子DartIsolate。
+
+到这里我们可以看到**DartVM，Engine，Shell**创建先后关系是：DartVM  ->  Engine  ->  RuntimeController  ->  DartIsolate  ->  Shell  ->  AndroidShellHolder。
+
+**总结**
+
+追溯上述源码总结AndroidShellHolder的构造函数，可以发现最主要的是创建了DartVM，Engine，DartIsolate，Shell四个对象，启动DartVM虚拟机，为上层应用程序被Launch做准备。
+
+### 2.2 处理SurfaceHolder.Callback回调
+先看onSurfaceCreated回调，这个函数最终会调用到FlutterJNI的nativeSurfaceCreated方法,它被注册到了shell\platform\android\platform_view_android_jni.cc文件中的SurfaceCreated的方法：
+
+```c++
+static void SurfaceCreated(JNIEnv* env,
+                           jobject jcaller,
+                           jlong shell_holder,
+                           jobject jsurface) {
+    auto window = fml::MakeRefCounted<AndroidNativeWindow>(ANativeWindow_fromSurface(env, jsurface));
+    ANDROID_SHELL_HOLDER->GetPlatformView()->NotifyCreated(std::move(window));
+}
+```
+
+这里的ANDROID_SHELL_HOLDER就是2.1.3中初始化的AndroidShellHolder对象，而GetPlatformView()方法获取的是PlatformViewAndroid类型的对象.
+
+#### 2.2.1 PlatformViewAndroid
+看看PlatformViewAndroid的NotifyCreated方法：
+
+```c++
+void PlatformViewAndroid::NotifyCreated(
+    fml::RefPtr<AndroidNativeWindow> native_window) {
+  if (android_surface_) {
+    InstallFirstFrameCallback();
+
+    fml::AutoResetWaitableEvent latch;
+    fml::TaskRunner::RunNowOrPostTask(
+        task_runners_.GetGPUTaskRunner(),
+        [&latch, surface = android_surface_.get(),
+         native_window = std::move(native_window)]() {
+          surface->SetNativeWindow(native_window);
+          latch.Signal();
+        });
+    latch.Wait();
+  }
+
+  PlatformView::NotifyCreated();
+}
+```
+
+- InstallFirstFrameCallback
+
+该方法启动了platform TaskRunner，同时通知java层，第一帧已经渲染好了。最终调用到了shell\platform\android\platform_view_android_jni.cc中的FlutterViewOnFirstFrame方法：
+
+```c++
+void FlutterViewOnFirstFrame(JNIEnv* env, jobject obj) {
+  env->CallVoidMethod(obj, g_on_first_frame_method);
+  FML_CHECK(CheckException(env));
+}
+```
+g_on_first_frame_method对应的其实是java层的onFirstFrame方法，其实是在FlutterJNI方法中：
+
+```c++
+g_on_first_frame_method = env->GetMethodID(g_flutter_jni_class->obj(), "onFirstFrame", "()V");
+```
+
+看看FlutterJNI中的这个方法：
+
+```java
+void onFirstFrame() {
+    for (FlutterUiDisplayListener listener : flutterUiDisplayListeners) {
+      listener.onFlutterUiDisplayed();
+    }
+}
+```
+
+这个onFlutterUiDisplayed最终回调给了FlutterNativeView中的flutterUiDisplayListener对象，而他收到消息之后，调用FlutterView的onFirstFrame方法，这个方法中主要做消息分发，谁监听了FirstFrameListener，就分发消息给谁。
+
+其实还是FlutterView自己监听了，只不过是在FlutterActivityDelegate类中完成的，这个实际到第一屏启动页的处理，后面再说。
+
+接下来启动了gpu TaskRunner。
+
+- PlatformView::NotifyCreated()
+看看这个方法：
+
+```c++
+void PlatformView::NotifyCreated() {
+  auto* platform_view = this;
+  fml::ManualResetWaitableEvent latch;
+  fml::TaskRunner::RunNowOrPostTask(
+      task_runners_.GetGPUTaskRunner(), [platform_view, &surface, &latch]() {
+        surface = platform_view->CreateRenderingSurface();
+        latch.Signal();
+      });
+  latch.Wait();
+  delegate_.OnPlatformViewCreated(std::move(surface));
+}
+```
+
+这个delegate_其实是Shell，在AndroidShellHolder的构造函数里面可以得知，看看这个OnPlatformViewCreated方法：
+
+```c++
+void Shell::OnPlatformViewCreated(std::unique_ptr<Surface> surface) {
+    auto ui_task = [engine = engine_->GetWeakPtr(), //
+        gpu_task_runner = task_runners_.GetGPUTaskRunner(),  //
+        gpu_task, 
+        should_post_gpu_task,
+        &latch  //
+    ] {
+        if (engine) {
+            engine->OnOutputSurfaceCreated();
+        }
+    }
+    auto io_task = [io_manager = io_manager_->GetWeakPtr(), 
+        platform_view,
+        ui_task_runner = task_runners_.GetUITaskRunner(),
+        ui_task
+    ] {
+        if (io_manager && !io_manager->GetResourceContext()) {
+            io_manager->NotifyResourceContextAvailabl (platform_view->CreateResourceContext());
+        }
+        // Step 1: Next, post a task on the UI thread to tell the engine that it has
+        // an output surface.
+        fml::TaskRunner::RunNowOrPostTask(ui_task_runner, ui_task);
+    };
+
+    fml::TaskRunner::RunNowOrPostTask(task_runners_.GetIOTaskRunner(), io_task);
+}
+```
+这里主要是检查资源，以及通知engine可以渲染并输出surface了。
+
+## 3、启动
+### 3.1 启动flash页面
+FlutterView创建成功之后，就开始对lauch页做处理了，就是所说的应用启动开屏第一页。先看看有没有定义launchView，在方法createLaunchView中：
+
+```java
+private View createLaunchView() {
+    if (!showSplashScreenUntilFirstFrame()) {
+        return null;
+    }
+    final Drawable launchScreenDrawable = getLaunchScreenDrawableFromActivityTheme();
+    if (launchScreenDrawable == null) {
+        return null;
+    }
+    final View view = new View(activity);
+    view.setLayoutParams(matchParent);
+    view.setBackground(launchScreenDrawable);
+    return view;
+}
+```
+
+showSplashScreenUntilFirstFrame函数先判断第一页的标志位是否打开：
+
+```java
+private Boolean showSplashScreenUntilFirstFrame() {
+    try {
+        ActivityInfo activityInfo = activity.getPackageManager().getActivityInfo(
+            activity.getComponentName(),
+            PackageManager.GET_META_DATA|PackageManager.GET_ACTIVITIES);
+        Bundle metadata = activityInfo.metaData;
+        return metadata != null && metadata.getBoolean("io.flutter.app.android.SplashScreenUntilFirstFrame");
+    } catch (NameNotFoundException e) {
+        return false;
+    }
+}
+```
+
+也就是说看看当前的Activity在AndroidManifest.xml里面定义的时候，是否定义了这个key = **io.flutter.app.android.SplashScreenUntilFirstFrame**的metadata，并返回他配置的值，默认返回false。基于这个判断，如果返回true，就进行下一步，否则返回空。
+
+看看下一步怎么获取第一帧的资源：
+
+```java
+private Drawable getLaunchScreenDrawableFromActivityTheme() {
+    TypedValue typedValue = new TypedValue();
+    if (!activity.getTheme().resolveAttribute(
+        android.R.attr.windowBackground,
+        typedValue,
+        true)) {
+        return null;
+    }
+    if (typedValue.resourceId == 0) {
+        return null;
+    }
+    try {
+        return activity.getResources().getDrawable(typedValue.resourceId);
+    } catch (NotFoundException e) {
+        Log.e(TAG, "Referenced launch screen windowBackground resource does not exist");
+        return null;
+    }
+}
+```
+
+从这里看到，先判断我们的Activity在AndroidManifest.xml里面定义的Theme，从这个theme里面获取windowBackground标签的值给到typedValue。如果资源id有效，就给到Drawable，返回Drawable对象。
+
+最后把这个Drawable对象设置成View的背景返回就行了。
+
+lauchView不为空，接下来addLaunchView：
+
+```java
+private void addLaunchView() {
+    if (launchView == null) {
+        return;
+    }
+
+    activity.addContentView(launchView, matchParent);
+    flutterView.addFirstFrameListener(new FlutterView.FirstFrameListener() {
+        @Override
+        public void onFirstFrame() {
+            FlutterActivityDelegate.this.launchView.animate()
+                .alpha(0f)
+                .setListener(new AnimatorListenerAdapter() {
+                    @Override
+                    public void onAnimationEnd(Animator animation) {
+                        ((ViewGroup) FlutterActivityDelegate.this.launchView.getParent())
+                            .removeView(FlutterActivityDelegate.this.launchView);
+                        FlutterActivityDelegate.this.launchView = null;
+                    }
+                });
+
+            FlutterActivityDelegate.this.flutterView.removeFirstFrameListener(this);
+        }
+    });
+    activity.setTheme(android.R.style.Theme_Black_NoTitleBar);
+}
+```
+
+先将launchView添加到最顶层，然后设置第一帧的监听，当第一帧渲染完毕之后，就对launchView做一个透明度的动画，动画执行完毕之后，将launchView移除，并移除第一帧的监听。
+
+### 3.2 启动dart代码
+加下来就会运行runBundle函数：
+
+> /io/flutter/app/FlutterActivityDelegate.java
+
+```java
+public void onCreate(Bundle savedInstanceState) {
+    String appBundlePath = FlutterMain.findAppBundlePath();
+    if (appBundlePath != null) {
+        runBundle(appBundlePath);
+    }
+}
+```
+```java
+private void runBundle(String appBundlePath) {
+    if (!flutterView.getFlutterNativeView().isApplicationRunning()) {
+        FlutterRunArguments args = new FlutterRunArguments();
+        args.bundlePath = appBundlePath;
+        args.entrypoint = "main";
+        flutterView.runFromBundle(args);
+    }
+}
+```
+appBundlePath对应的flutter_assets，entrypoint对应的入口名称，就是main.dart。
+
+看看runFromBundle函数最终调用到了哪里：
+
+> io\flutter\view\FlutterNativeView.java
+
+```java
+    public void runFromBundle(FlutterRunArguments args) {
+    mFlutterJNI.runBundleAndSnapshotFromLibrary(
+        args.bundlePath,
+        args.entrypoint,
+        args.libraryPath,
+        mContext.getResources().getAssets()
+    );
+
+    applicationIsRunning = true;
+}
+```
+到这里就通过FlutterJNI调用到了runBundleAndSnapshotFromLibrary：
+
+> io\flutter\embedding\engine\FlutterJNI.java
+
+```java
+public void runBundleAndSnapshotFromLibrary(
+      @NonNull String bundlePath,
+      @Nullable String entrypointFunctionName,
+      @Nullable String pathToEntrypointFunction,
+      @NonNull AssetManager assetManager
+  ) {
+    nativeRunBundleAndSnapshotFromLibrary(
+        nativePlatformViewId,
+        bundlePath,
+        entrypointFunctionName,
+        pathToEntrypointFunction,
+        assetManager
+    );
+}
+```
+最终到了native层：
+
+> shell\platform\android\platform_view_android_jni.cc
+
+```c++
+static void RunBundleAndSnapshotFromLibrary(){
+    RunConfiguration config(std::move(isolate_configuration), std::move(asset_manager));
+    {
+        auto entrypoint = fml::jni::JavaStringToString(env, jEntrypoint);
+        auto libraryUrl = fml::jni::JavaStringToString(env, jLibraryUrl);
+        if ((entrypoint.size() > 0) && (libraryUrl.size() > 0)) {
+            config.SetEntrypointAndLibrary(std::move(entrypoint), std::move(libraryUrl));
+        } else if (entrypoint.size() > 0) {
+            config.SetEntrypoint(std::move(entrypoint));
+        }
+    }
+
+    ANDROID_SHELL_HOLDER->Launch(std::move(config));
+}
+```
+看看Launch函数：
+
+> shell\platform\android\android_shell_holder.cc
+
+```c++
+void AndroidShellHolder::Launch(RunConfiguration config) {
+  shell_->RunEngine(std::move(config));
+}
+```
+最终调用的地方在Shell.cc里面：
+
+> shell\common\shell.cc
+
+```c++
+void Shell::RunEngine(){
+    fml::TaskRunner::RunNowOrPostTask(
+    task_runners_.GetUITaskRunner(),
+    fml::MakeCopyable(
+      [run_configuration = std::move(run_configuration),
+       weak_engine = weak_engine_, result]() mutable {
+        auto run_result = weak_engine->Run(std::move(run_configuration));
+        result(run_result);
+    }));
+}
+```
+
+到这里，可以看到要启动引擎了:
+
+> shell\common\engine.cc
+
+```c++
+Engine::RunStatus Engine::Run(RunConfiguration configuration) {
+    auto isolate_launch_status = PrepareAndLaunchIsolate(std::move(configuration));
+    std::shared_ptr<DartIsolate> isolate = runtime_controller_->GetRootIsolate().lock();
+    bool isolate_running = isolate && isolate->GetPhase() == DartIsolate::Phase::Running;
+    return isolate_running ? Engine::RunStatus::Success : Engine::RunStatus::Failure;
+}
+```
+之前有说过根isolate的启动，是在engine启动的时候才开始启动，现在看看怎么启动isolate的：
+
+> shell\common\engine.cc
+
+```c++
+Engine::RunStatus Engine::PrepareAndLaunchIsolate(){
+    std::shared_ptr<DartIsolate> isolate = runtime_controller_->GetRootIsolate().lock();
+    if (!isolate_configuration->PrepareIsolate(*isolate)) {
+        return RunStatus::Failure;
+    }
+    if (!isolate->RunFromLibrary(configuration.GetEntrypointLibrary(), configuration.GetEntrypoint(), settings_.dart_entrypoint_args)) {
+        FML_LOG(ERROR) << "Could not run the isolate.";
+        return RunStatus::Failure;
+    }
+    return RunStatus::Success;
+}
+```
+先获取isolate对象，然后运行RunFromLibrary方法：
+
+> runtime\dart_isolate.cc
+
+```c++
+[[nodiscard]] bool DartIsolate::RunFromLibrary(){
+    auto user_entrypoint_function = Dart_GetField(Dart_LookupLibrary(tonic::ToDart(library_name.c_str())), tonic::ToDart(entrypoint_name.c_str()));
+    auto entrypoint_args = tonic::ToDart(args);
+    if (!InvokeMainEntrypoint(user_entrypoint_function, entrypoint_args)) {
+        return false;
+    }
+    phase_ = Phase::Running;
+    if (on_run) {
+        on_run();
+    }
+    return true;
+}
+```
+Dart_GetField的目的是在我们的dart代码中目录lib中查找main.dart文件，然后调用InvokeMainEntrypoint函数执行里面的main方法：
+
+> runtime\dart_isolate.cc
+
+```c++
+[[nodiscard]] static bool InvokeMainEntrypoint(){
+    Dart_Handle start_main_isolate_function = tonic::DartInvokeField(Dart_LookupLibrary(tonic::ToDart("dart:isolate")),
+        "_getStartMainIsolateFunction", {});
+    if (tonic::LogIfError(tonic::DartInvokeField(
+        Dart_LookupLibrary(tonic::ToDart("dart:ui")),
+            "_runMainZoned",{start_main_isolate_function,
+        user_entrypoint_function, 
+        args}))) {
+        return false;
+    }
+    return true;
+}
+```
+看看_runMainZoned方法：
+
+> lib\ui\hooks.dart
+
+```c++
+void _runMainZoned(Function startMainIsolateFunction,
+                   Function userMainFunction,
+                   List<String> args) {
+    startMainIsolateFunction((){
+        runZonedGuarded<void>(() {
+            userMainFunction();
+        }, (Object error, StackTrace stackTrace) {
+        });
+  }, null);    
+}
+```
+最终调用的还是用户的main函数，就是我们一开始传递过去entrypoint值。
+
+## 4、Isolate
+看看DartIsolate这个类的注释：
+> 他代表了一个活着的isolate示例。一个isolate是一个独立的Dart可执行上下文。不同的isolate不共享内存，并能够被Dart VM虚拟机管理的工作线程池中的某一个Dart VM虚拟机同时调度。
+> 
+> Dart VM虚拟机控制着Dart isolate的整个生命周期，正因为如此，引擎从来不会在一段很长的时间段内持有Dart VM虚拟机的强指针，这样就允许Dart VM虚拟机或isolate本身去中断Dart的执行但并不影响引擎运行。
+>
+> 那些引擎创建的isolate看起来像是代表了UI绑定的Flutter应用程序代码被称作底层（root）isolate。
+>
+> 根isolate有以下特性：
+> * 根isolate创建了一个新的isolate组，子isolate被添加到这个组里面，当根isolate死了，那么组里面所有的子isolate将会被中断。
+> * 只有根isolate能够获取UI绑定
+> * 根isolate在引擎管理的线程上执行他们的代码，而其他的isolate则在引擎无法控制的被Dart VM虚拟机管理的工作线程池上运行他们的Dart代码
+> * 正因为引擎不知道非根isolate运行在哪个线程，所以引擎也没有机会去获取一个非根部isolate的引用，而这些非根isolate只能被他们自己中断或当他们的isolate组被销毁的时候而中断。
+
+下面看看native层的调用流程图：
+
+> 图片原地址：https://ftp.bmp.ovh/imgs/2020/04/baef9752ad881735.jpg
+
+![](https://ftp.bmp.ovh/imgs/2020/04/baef9752ad881735.jpg)
+
+再看看Engine,Dart VM,Isolate之间的关系：
+> 原图片地址https://ftp.bmp.ovh/imgs/2020/04/9c7add234ca0464b.jpg
+
+![](https://ftp.bmp.ovh/imgs/2020/04/9c7add234ca0464b.jpg)
+
+Shell从四个Thread中获取到了四个Thread对应的TaskRunner，而TaskRunner中实际上是MessageLoopImpl在干活，从消息队列中取出消息处理。
+
+> https://github.com/flutter/flutter/wiki/The-Engine-architecture
+
+比较特殊的是，Engine是在UI TaskRunner里面新建并运行，在创建的过程中一并创建了Dart VM和Root Isolate，我们上层写的dart代码也是运行在这个TaskRunner里面。不同的是，当传递图片到GPU，画面帧渲染的时候使用的是GPU TaskRunner,而一些IO操作比如从assets里面读取文件等则是在IO TaskRunner里面去执行。IO与GPU交互频繁，为了性能，IO TaskRunner 设置了一个特殊的上下文在一个相同的共享组里面，并将他作为GPU TaskRunner的主要上下文。
+
+上述这些操作都是通过DartVM调度Isolate去实现的，目前Google在Android平台上TaskRunner的策略是，一个Engine实例创建一个UI TaskRunner，一个IO TaskRunner，一个GPU TaskRunner，所有的Engine实例共享一个Platform TaskRunner和他的Thread。

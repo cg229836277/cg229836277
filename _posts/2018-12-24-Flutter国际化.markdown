@@ -1,0 +1,166 @@
+---
+layout: post
+title:  "Flutter国际化"
+date:   2018-12-24 11:09:22 +0800
+categories: flutter
+---
+
+## 一、添加需要支持的库
+在pubspec.yaml中的dependencies:节点下添加依赖：
+```xml
+flutter_localizations:
+  sdk: flutter
+```
+同时在程序运行的main.dart中添加import：
+```java
+import 'package:flutter_localizations/flutter_localizations.dart';
+```
+## 二、TranslationsDelegate
+添加一个TranslationsDelegate继承自LocalizationsDelegate<Translations>，然后实现这个类的方法：
+```java
+class TranslationsDelegate extends LocalizationsDelegate<Translations> {
+  const TranslationsDelegate();
+
+  /// 改这里是为了不硬编码支持的语言
+  @override
+  bool isSupported(Locale locale) =>
+      supportedLanguages.indexOf(locale.languageCode) >= 0;
+
+  @override
+  Future<Translations> load(Locale locale) {
+    print("load is called");
+    return Translations.load(locale);
+  }
+
+  @override
+  bool shouldReload(TranslationsDelegate old) => false;
+
+  static const List<String> supportedLanguages = ['en', 'zh'];
+
+  Iterable<Locale> supportedLocales() =>
+      supportedLanguages.map<Locale>((lang) => new Locale(lang, ''));
+}
+```
+再添加一个翻译资源的处理类：
+```java
+class Translations {
+  Translations(Locale locale) {
+    this.locale = locale;
+    _localizedValues = null;
+  }
+
+  Locale locale;
+  static Map<dynamic, dynamic> _localizedValues;
+
+  static Translations of(BuildContext context) {
+    return Localizations.of<Translations>(context, Translations);
+  }
+
+  String text(String key) {
+    print("start apply text");
+    return _localizedValues[key] ?? '** $key not found';
+  }
+
+  static Future<Translations> load(Locale locale) async {
+    Translations translations = new Translations(locale);
+    String jsonContent =
+        await rootBundle.loadString("locale/${locale.languageCode}.json");
+    _localizedValues = json.decode(jsonContent);
+    return translations;
+  }
+
+  get currentLanguage => locale.languageCode;
+}
+```
+
+## 三、在工程根目录下添加资源文件
+在项目根目录下新建locale文件夹，并添加两个翻译资源文件：
+```java
+en.json
+{
+  "app_title": "My Application Title",
+  "main_title": "My Main Title"
+}
+zh.json
+{
+  "app_title": "应用程序标题",
+  "main_title": "我的主应用"
+}
+```
+
+在pubspec.yaml下声明翻译资源文件：
+```xml
+assets:
+  - locale/en.json
+  - locale/zh.json
+```
+
+## 四、实现主程序的逻辑，跟踪语言的变化：
+```java
+import 'package:flutter/material.dart';
+import 'translations.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+
+void main() => runApp(new MyApp());
+
+/// 将App设置为Stateful，这让它可以响应刷新事件，调用应用的SetState()
+class MyApp extends StatefulWidget {
+  @override
+  _MyAppState createState() => new _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  TranslationsDelegate _localeOverrideDelegate = new TranslationsDelegate();
+
+  onLocaleChange(Locale locale) {
+    setState(() {
+      _localeOverrideDelegate = new TranslationsDelegate();
+    });
+  }
+
+  // This widget is the root of your application.
+  @override
+  Widget build(BuildContext context) {
+    return new MaterialApp(
+      title: 'My Application',
+      theme: new ThemeData(
+        primarySwatch: Colors.blue,
+      ),
+      localizationsDelegates: [
+        _localeOverrideDelegate, // 注册一个新的delegate
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+      ],
+      supportedLocales: _localeOverrideDelegate.supportedLocales(),
+      home: new MyHomePage(),
+    );
+  }
+}
+
+class MyHomePage extends StatefulWidget {
+  _MyHomePageState createState() => new _MyHomePageState();
+}
+
+class _MyHomePageState extends State<MyHomePage> {
+  @override
+  Widget build(BuildContext context) {
+    return new Scaffold(
+      appBar: new AppBar(
+        title:
+            new Text(Translations.of(context).text('main_title')), 
+      ),
+      body: new Container(),
+    );
+  }
+}
+```
+
+可以看到比较核心的代码片段是：
+```java
+localizationsDelegates: [
+        _localeOverrideDelegate, // 注册一个新的delegate
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+      ],
+```
+注册系统语言变化的回调到代理类，可以重新加载对应预压的资源然后再去刷新界面，加载对应的多语言资源。

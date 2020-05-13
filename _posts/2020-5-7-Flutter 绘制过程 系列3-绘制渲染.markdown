@@ -1,0 +1,570 @@
+---
+layout: post
+title:  "Flutter 绘制过程 系列3-绘制渲染"
+date:   2020-5-7 11:09:22 +0800
+categories: flutter
+---
+
+
+> 文章将同步到微信公众号:Android部落格
+
+流程图如下：
+![](https://ftp.bmp.ovh/imgs/2020/05/8b635759ae125a6e.jpg)
+
+## 1、预热帧
+
+### 1.1 scheduleWarmUpFrame
+runApp调用的最后一个方法是scheduleWarmUpFrame，从这里开始渲染之前遍历的widget。
+> packages\flutter\lib\src\scheduler\binding.dart\ScheduleBinding
+
+```dart
+void scheduleWarmUpFrame() {
+    handleDrawFrame();
+}
+
+void handleDrawFrame() {
+    for (FrameCallback callback in _persistentCallbacks)
+        _invokeFrameCallback(callback, _currentFrameTimeStamp);
+}
+```
+_persistentCallbacks是一个FrameCallback类型的List，RendererBinding的initInstances方法中添加了一个回调到这个List中，调用的地方是：
+> packages\flutter\lib\src\rendering\binding.dart\RendererBinding
+
+```dart
+void _handlePersistentFrameCallback(Duration timeStamp) {
+    drawFrame();
+}
+
+@protected
+void drawFrame() {
+    pipelineOwner.flushLayout();
+    pipelineOwner.flushCompositingBits();
+    pipelineOwner.flushPaint();
+    renderView.compositeFrame(); // this sends the bits to the GPU
+    pipelineOwner.flushSemantics(); // this also sends the semantics to the OS.
+}
+```
+这里的pipelineOwner就是RendererBinding类的initInstances方法中初始化的PipelineOwner对象。
+
+renderView就是RendererBinding类的initRenderView方法中初始化的RenderView对象。
+
+## 2、PipelineOwner
+> D:\software-installpath\flutter-1.0.0\packages\flutter\lib\src\rendering\object.dart\PipelineOwner
+
+### 2.1 flushLayout
+
+```dart
+void flushLayout() {
+    while (_nodesNeedingLayout.isNotEmpty) {
+        final List<RenderObject> dirtyNodes = _nodesNeedingLayout;
+        _nodesNeedingLayout = <RenderObject>[];
+        for (RenderObject node in dirtyNodes..sort((RenderObject a, RenderObject b) => a.depth - b.depth)) {
+          if (node._needsLayout && node.owner == this)
+            node._layoutWithoutResize();
+        }
+    }
+}
+```
+_nodesNeedingLayout里面存放的就是需要布局的RenderObject对象。将这些对象先以深度从小到大排序，然后遍历出来渲染布局。
+
+> D:\software-installpath\flutter-1.0.0\packages\flutter\lib\src\rendering\object.dart\RenderObject
+
+#### 2.1.1 _layoutWithoutResize
+
+```dart
+void _layoutWithoutResize() {
+    performLayout();
+    markNeedsSemanticsUpdate();
+    _needsLayout = false;
+    markNeedsPaint();
+}
+```
+这个performLayout实际是虚类RenderObject定义的一个方法，需要有一个类继承RenderObject并实现performLayout方法。
+
+看看_nodesNeedingLayout中最开始的元素是谁。在`packages\flutter\lib\src\rendering\object.dart`文件的scheduleInitialLayout方法中，将this添加到了_nodesNeedingLayout list中，而scheduleInitialLayout方法其实是在initRenderView方法中，通过RenderView调用prepareInitialFrame方法而来。
+
+于是performLayout到了RenderView中。之前提到过RenderView是根View，看看RenderView的performLayout方法：
+#### 2.1.2 布局RenderView
+> RenderView
+
+```dart
+@override
+void performLayout() {
+  if (child != null)
+  child.layout(BoxConstraints.tight(_size));
+}
+```
+这个child是ChildType类型，看看下面关于他的定义：
+
+```dart
+mixin RenderObjectWithChildMixin<ChildType extends RenderObject> on RenderObject {
+}
+```
+ChildType继承自RenderObject，作为RenderObjectWithChildMixin的类型约束，看看RenderObjectWithChildMixin是谁。
+
+在RenderObjectToWidgetAdapter初始化的时候，会传一个container参数过来，这个container所属的类型就是RenderObjectWithChildMixin。而这个container就是RenderView。为啥呢，看看RenderView的构造函数：
+> RenderView
+
+```dart
+class RenderView extends RenderObject with RenderObjectWithChildMixin<RenderBox> {
+    RenderView({
+    RenderBox child,
+    @required ViewConfiguration configuration,
+    @required ui.Window window,
+  }) : assert(configuration != null),
+       _configuration = configuration,
+       _window = window {
+    this.child = child;
+  }
+}
+```
+在初始化成员列表里面，看到了`this.child = child;`,this.child指的就是performLayout方法里面那个child了。
+
+这里的RenderBox定义如下：
+
+```dart
+abstract class RenderBox extends RenderObject {
+}
+```
+
+到这里基本上就可以知道performLayout里面的child其实是个RenderObject类型。
+
+### 2.1.3 layout布局
+#### 2.1.3.1 RenderObject的layout
+RenderObject的layout方法如下：
+> RenderObject
+
+```dart
+void layout(Constraints constraints, { bool parentUsesSize = false }) {
+    RenderObject relayoutBoundary;
+    if (!parentUsesSize || sizedByParent || constraints.isTight || parent is! RenderObject) {
+      relayoutBoundary = this;
+    } else {
+      final RenderObject parent = this.parent;
+      relayoutBoundary = parent._relayoutBoundary;
+    }
+    if (!_needsLayout && constraints == _constraints && relayoutBoundary == _relayoutBoundary) {
+        return;
+    }
+    _constraints = constraints;
+    if (_relayoutBoundary != null && relayoutBoundary != _relayoutBoundary) {
+        visitChildren((RenderObject child) {
+            child._cleanRelayoutBoundary();
+      });
+    }
+    _relayoutBoundary = relayoutBoundary;
+    if (sizedByParent) {
+        performResize();
+    }
+    performLayout();
+    markNeedsSemanticsUpdate();
+    _needsLayout = false;
+    markNeedsPaint();
+}
+```
+根据layout方法，我们大概可以知道布局的基本逻辑是：
+
+如果父视图没有约束子视图的大小，那么子视图唯一要做的就是布局自己的边界；另外一种情况是父视图明确约束了大小，子视图要按照约束重新布局自身边界大小，并在获取边界大小之后重新布局，布局完成加入需要绘制列表:
+> RenderObject
+
+```dart
+void markNeedsPaint() {
+    if (_needsPaint)
+        return;
+    _needsPaint = true;
+    if (isRepaintBoundary) {
+        if (owner != null) {
+            owner._nodesNeedingPaint.add(this);
+            owner.requestVisualUpdate();
+        }
+    } else if (parent is RenderObject) {
+        final RenderObject parent = this.parent;
+        parent.markNeedsPaint();
+    } else {
+        if (owner != null)
+            owner.requestVisualUpdate();
+    }
+}
+```
+第一种情况是子视图只需要关注自身边界；第二种情况是有父布局的约束；第三种情况是根视图（RenderView），直接刷新显示就行了。
+requestVisualUpdate对应的是：
+> PipelineOwner
+
+```dart
+void requestVisualUpdate() {
+    if (onNeedVisualUpdate != null)
+        onNeedVisualUpdate();
+}
+```
+PipelineOwner类初始化的时候，对应的是ensureVisualUpdate方法，这个方法在ScheduleBinding类中定义：
+> ScheduleBinding
+
+```dart
+void ensureVisualUpdate() {
+    switch (schedulerPhase) {
+      case SchedulerPhase.idle:
+      case SchedulerPhase.postFrameCallbacks:
+        scheduleFrame();
+        return;
+      case SchedulerPhase.transientCallbacks:
+      case SchedulerPhase.midFrameMicrotasks:
+      case SchedulerPhase.persistentCallbacks:
+        return;
+    }
+}
+```
+在postFrameCallbacks阶段，调用scheduleFrame方法到引擎申请渲染帧。
+
+### 2.2 flushCompositingBits
+> PipelineOwner
+
+```dart
+void flushCompositingBits() {
+    if (!kReleaseMode) {
+      Timeline.startSync('Compositing bits');
+    }
+    _nodesNeedingCompositingBitsUpdate.sort((RenderObject a, RenderObject b) => a.depth - b.depth);
+    for (RenderObject node in _nodesNeedingCompositingBitsUpdate) {
+      if (node._needsCompositingBitsUpdate && node.owner == this)
+        node._updateCompositingBits();
+    }
+    _nodesNeedingCompositingBitsUpdate.clear();
+    if (!kReleaseMode) {
+      Timeline.finishSync();
+    }
+}
+```
+按照深度depth从浅到深，更新语义：
+> RenderObject
+
+```dart
+void _updateCompositingBits() {
+    if (!_needsCompositingBitsUpdate)
+      return;
+    final bool oldNeedsCompositing = _needsCompositing;
+    _needsCompositing = false;
+    visitChildren((RenderObject child) {
+      child._updateCompositingBits();
+      if (child.needsCompositing)
+        _needsCompositing = true;
+    });
+    if (isRepaintBoundary || alwaysNeedsCompositing)
+      _needsCompositing = true;
+    if (oldNeedsCompositing != _needsCompositing)
+      markNeedsPaint();
+    _needsCompositingBitsUpdate = false;
+}
+```
+递归查找需要更新的语义，然后添加到需要绘制List中。
+
+### 2.3 flushPaint
+> PipelineOwner
+
+```dart
+void flushPaint() {
+    if (!kReleaseMode) {
+      Timeline.startSync('Paint', arguments: timelineWhitelistArguments);
+    }
+    try {
+      final List<RenderObject> dirtyNodes = _nodesNeedingPaint;
+      _nodesNeedingPaint = <RenderObject>[];
+      // Sort the dirty nodes in reverse order (deepest first).
+      for (RenderObject node in dirtyNodes..sort((RenderObject a, RenderObject b) => b.depth - a.depth)) {
+        if (node._needsPaint && node.owner == this) {
+          if (node._layer.attached) {
+            PaintingContext.repaintCompositedChild(node);
+          } else {
+            node._skippedPaintingOnLayer();
+          }
+        }
+      }
+    } finally {
+      if (!kReleaseMode) {
+        Timeline.finishSync();
+      }
+    }
+}
+```
+从这个方法可以看出，所有添加到_nodesNeedingPaint里面的RenderObject，都认为是dirty节点，需要绘制刷新。并且刷新的机制是从深到浅，也就是先从子再到父。
+
+#### 2.3.1 repaintCompositedChild
+看看repaintCompositedChild方法：
+> PaintingContext
+
+```dart
+static void repaintCompositedChild(RenderObject child, { bool debugAlsoPaintedParent = false }) {
+    _repaintCompositedChild(
+      child,
+      debugAlsoPaintedParent: debugAlsoPaintedParent,
+    );
+}
+
+static void _repaintCompositedChild(
+    RenderObject child, {
+    bool debugAlsoPaintedParent = false,
+    PaintingContext childContext,
+  }) {
+    OffsetLayer childLayer = child._layer;
+    if (childLayer == null) {
+      child._layer = childLayer = OffsetLayer();
+    } else {
+      childLayer.removeAllChildren();
+    }
+    childContext ??= PaintingContext(child._layer, child.paintBounds);
+    child._paintWithContext(childContext, Offset.zero);
+
+    childContext.stopRecordingIfNeeded();
+  }
+```
+先检查RenderObject的Layer，如果为空，就新建一个OffsetLayer类型的Layer。否则的话删除当前RenderObject下所有child的Layer，包含他的左右兄弟（为什么要删除呢？上一步的dirtyNodes中其实已经包含了所有需要重新paint的child），其实这里还隐含了复用_layer的逻辑。
+
+另外childContext为空的话，新建一个PaintingContext，否则复用。
+看看_paintWithContext方法：
+> RenderObject
+
+```dart
+void _paintWithContext(PaintingContext context, Offset offset) {
+    paint(context, offset);
+}
+```
+
+#### 2.3.2 paint
+这个paint被各个Widget的Element所创建的RenderObject重载，以switch.dart文件中的_RenderCupertinoSwitch类为例：
+> _RenderCupertinoSwitch  paint方法太长，只写大概
+
+```dart
+@override
+void paint(PaintingContext context, Offset offset) {
+    final Canvas canvas = context.canvas;
+    final Paint paint = Paint();
+    if (needsCompositing) {
+        appendLayer(childLayer);
+    }
+    painter(PaintingContext, offset)
+}
+
+void paint(Canvas canvas, Rect rect) {
+    final RRect rrect = RRect.fromRectAndRadius(
+      rect,
+      Radius.circular(rect.shortestSide / 2.0),
+    );
+    
+    for (BoxShadow shadow in shadows)
+      canvas.drawRRect(rrect.shift(shadow.offset), shadow.toPaint());
+    
+    canvas.drawRRect(
+      rrect.inflate(0.5),
+      Paint()..color = _kThumbBorderColor,
+    );
+    canvas.drawRRect(rrect, Paint()..color = color);
+}
+
+void drawRRect(RRect rrect, Paint paint) {
+    _drawRRect(rrect._value32, paint._objects, paint._data);
+}
+
+void _drawRRect(Float32List rrect,
+              List<dynamic> paintObjects,
+              ByteData paintData) native 'Canvas_drawRRect';
+```
+类似的，每个重载paint方法的RenderObject都有自己的绘制策略，但最终都是在Canvas画布上面绘制。
+
+### 2.4 compositeFrame
+> RenderView
+
+```dart
+void compositeFrame() {
+    Timeline.startSync('Compositing', arguments: timelineWhitelistArguments);
+    try {
+      final ui.SceneBuilder builder = ui.SceneBuilder();
+      final ui.Scene scene = layer.buildScene(builder);//native 'SceneBuilder_build'
+      if (automaticSystemUiAdjustment) 
+        _updateSystemChrome();
+      _window.render(scene);//native 'Window_render'
+      scene.dispose();//native 'Scene_dispose'
+    } finally {
+      Timeline.finishSync();
+    }
+}
+```
+从这个方法可以看出，这里要开始渲染了。先创建一个场景构造器，layer创建场景（layer的append方法将渲染树的layer都追加在这个layer里面），最后通过_window调用render渲染。
+
+#### 2.4.1 Window
+> Window
+
+```c++
+void Window::RegisterNatives(tonic::DartLibraryNatives* natives) {
+  natives->Register({
+      {"Window_render", Render, 2, true},
+  });
+}
+```
+Window_render注册到了Render方法：
+
+```c++
+void Render(Dart_NativeArguments args) {
+  Dart_Handle exception = nullptr;
+  Scene* scene =
+      tonic::DartConverter<Scene*>::FromArguments(args, 1, exception);
+  UIDartState::Current()->window()->client()->Render(scene);
+}
+```
+
+#### 2.4.2 RuntimeController
+Render方法实际调用到了RuntimeController类的Render方法：
+
+```c++
+void RuntimeController::Render(Scene* scene) {
+  client_.Render(scene->takeLayerTree());
+}
+```
+
+#### 2.4.3 Engine
+然后到Engine中：
+
+```c++
+void Engine::Render(std::unique_ptr<flutter::LayerTree> layer_tree) {
+  if (!layer_tree)
+    return;
+
+  // Ensure frame dimensions are sane.
+  if (layer_tree->frame_size().isEmpty() ||
+      layer_tree->frame_physical_depth() <= 0.0f ||
+      layer_tree->frame_device_pixel_ratio() <= 0.0f)
+    return;
+
+  animator_->Render(std::move(layer_tree));
+}
+```
+
+#### 2.4.4 Animator
+再到Animator类：
+
+```c++
+void Animator::Render(std::unique_ptr<flutter::LayerTree> layer_tree) {
+  if (dimension_change_pending_ &&
+      layer_tree->frame_size() != last_layer_tree_size_) {
+    dimension_change_pending_ = false;
+  }
+  last_layer_tree_size_ = layer_tree->frame_size();
+
+  if (layer_tree) {
+    // Note the frame time for instrumentation.
+    layer_tree->RecordBuildTime(last_frame_begin_time_,
+                                last_frame_target_time_);
+  }
+
+  // Commit the pending continuation.
+  producer_continuation_.Complete(std::move(layer_tree));
+
+  delegate_.OnAnimatorDraw(layer_tree_pipeline_);
+}
+```
+
+#### 2.4.5 Shell
+delegate_其实是Shell类型，OnAnimatorDraw方法如下：
+
+```c++
+void Shell::OnAnimatorDraw(fml::RefPtr<Pipeline<flutter::LayerTree>> pipeline) {
+  FML_DCHECK(is_setup_);
+
+  task_runners_.GetGPUTaskRunner()->PostTask(
+      [& waiting_for_first_frame = waiting_for_first_frame_,
+       &waiting_for_first_frame_condition = waiting_for_first_frame_condition_,
+       rasterizer = rasterizer_->GetWeakPtr(),
+       pipeline = std::move(pipeline)]() {
+        if (rasterizer) {
+          rasterizer->Draw(pipeline);
+
+          if (waiting_for_first_frame.load()) {
+            waiting_for_first_frame.store(false);
+            waiting_for_first_frame_condition.notify_all();
+          }
+        }
+      });
+}
+```
+
+#### 2.4.6 Rasterizer
+在引擎初始化的时候有构造rasterizer对象，在GPU线程中执行Draw方法，看看Draw方法：
+> Rasterizer
+
+```dart
+void Rasterizer::Draw(fml::RefPtr<Pipeline<flutter::LayerTree>> pipeline) {
+    Pipeline<flutter::LayerTree>::Consumer consumer =
+      [&](std::unique_ptr<LayerTree> layer_tree) {
+        raster_status = DoDraw(std::move(layer_tree));
+    };
+    PipelineConsumeResult consume_result = pipeline->Consume(consumer);
+}
+
+RasterStatus Rasterizer::DoDraw(
+    std::unique_ptr<flutter::LayerTree> layer_tree) {
+    RasterStatus raster_status = DrawToSurface(*layer_tree);
+}
+
+RasterStatus Rasterizer::DrawToSurface(flutter::LayerTree& layer_tree) {
+    auto frame = surface_->AcquireFrame(layer_tree.frame_size());
+    auto* external_view_embedder = surface_->GetExternalViewEmbedder();
+    SkCanvas* embedder_root_canvas = nullptr;
+    if (external_view_embedder != nullptr) {
+        external_view_embedder->BeginFrame(layer_tree.frame_size(),surface_->GetContext(),layer_tree.device_pixel_ratio());
+        embedder_root_canvas = external_view_embedder->GetRootCanvas();
+    }
+    auto root_surface_canvas =
+        embedder_root_canvas ? embedder_root_canvas : frame->SkiaCanvas();
+
+    auto compositor_frame = compositor_context_->AcquireFrame(
+      surface_->GetContext(),       // skia GrContext
+      root_surface_canvas,          // root surface canvas
+      external_view_embedder,       // external view embedder
+      root_surface_transformation,  // root surface transformation
+      true,                         // instrumentation enabled
+      frame->supports_readback(),   // surface supports pixel reads
+      gpu_thread_merger_            // thread merger
+    );
+    if (compositor_frame) {
+        RasterStatus raster_status = compositor_frame->Raster(layer_tree, false);
+        if (external_view_embedder != nullptr) {
+            external_view_embedder->SubmitFrame(surface_->GetContext(),root_surface_canvas);
+            frame->Submit();
+            external_view_embedder->FinishFrame();
+        } else {
+            frame->Submit();
+        }
+    }
+}
+```
+在光栅类Rasterizer中前后调用了Draw，DoDraw，DrawToSurface方法，主要任务是：通过layer_tree的frame数量请求frame；获取绘制画布SkiaCanvas；获取复合帧；调用Raster方法传递layer_tree形成栅格；提交栅格到画布；完成在画布上的绘制，然后提交。
+
+### 2.5 flushSemantics
+> PipelineOwner
+
+```dart
+void flushSemantics() {
+    final List<RenderObject> nodesToProcess = _nodesNeedingSemantics.toList()
+            ..sort((RenderObject a, RenderObject b) => a.depth - b.depth);
+    _nodesNeedingSemantics.clear();
+    for (RenderObject node in nodesToProcess) {
+    if (node._needsSemanticsUpdate && node.owner == this)
+      node._updateSemantics();
+    }
+    _semanticsOwner.sendSemanticsUpdate();
+}
+```
+刷新语义。在绘制的过程中，如果有渲染对象通过markNeedsSemanticsUpdate方法被标记为需要更新语义，其节点就会被加入到_nodesNeedingSemantics List中。
+
+#### 2.5.1 flushSemantics
+最后通过sendSemanticsUpdate方法执行语义更新：
+> SemanticsOwner
+
+```dart
+void sendSemanticsUpdate() {
+    final ui.SemanticsUpdateBuilder builder = ui.SemanticsUpdateBuilder();
+    SemanticsBinding.instance.window.updateSemantics(builder.build());//native 'Window_updateSemantics'
+}
+```
+
+> 微信公众号
+
+![微信公众号](https://ftp.bmp.ovh/imgs/2020/04/f472fa7e9c62a8c7.jpg)

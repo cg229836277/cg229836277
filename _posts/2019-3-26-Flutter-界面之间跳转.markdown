@@ -1,0 +1,441 @@
+---
+layout: post
+title:  "Flutter-界面之间跳转"
+date:   2019-3-26 11:09:22 +0800
+categories: flutter
+---
+
+> 参考：https://flutter.io/docs/cookbook/navigation/navigation-basics
+
+## 一、概述
+Flutter中通过Navigator实现在两个界面之间跳转，分别是push和pop方法。
+
+直接上示例：
+```java
+import 'package:flutter/material.dart';
+
+void main() {
+  runApp(MaterialApp(
+    title: 'Navigation Basics',
+    home: FirstScreen(),
+  ));
+}
+
+class FirstScreen extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('First Screen'),
+      ),
+      body: Center(
+        child: RaisedButton(
+          child: Text('Launch screen'),
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => SecondScreen()),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class SecondScreen extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text("Second Screen"),
+      ),
+      body: Center(
+        child: RaisedButton(
+          onPressed: () {
+            Navigator.pop(context);
+          },
+          child: Text('Go back!'),
+        ),
+      ),
+    );
+  }
+}
+```
+
+## 二、给路由起一个名字
+一般情况下在MaterialApp 构造函数总定义initialRoute和routes，initialRoute属性表示界面从哪里开始的，routes 属性定义了程序中存在路由，以及后续可能会被创建和push到的路由.
+
+定义示例：
+```java
+MaterialApp(
+  // Start the app with the "/" named route. In our case, the app will start
+  // on the FirstScreen Widget
+  initialRoute: '/',
+  routes: {
+    // When we navigate to the "/" route, build the FirstScreen Widget
+    '/': (context) => FirstScreen(),
+    // When we navigate to the "/second" route, build the SecondScreen Widget
+    '/second': (context) => SecondScreen(),
+  },
+);
+```
+当使用 initialRoute属性的时候，应该确保没有定义home属性。
+点击跳转到第二个界面：
+```java
+// Within the `FirstScreen` Widget
+onPressed: () {
+  // Navigate to the second screen using a named route
+  Navigator.pushNamed(context, '/second');
+}
+```
+从第二个界面返回：
+```java
+// Within the SecondScreen Widget
+onPressed: () {
+  // Navigate back to the first screen by popping the current route
+  // off the stack
+  Navigator.pop(context);
+}
+```
+完整示例：
+```java
+import 'package:flutter/material.dart';
+
+void main() {
+  runApp(MaterialApp(
+    title: 'Named Routes Demo',
+    // Start the app with the "/" named route. In our case, the app will start
+    // on the FirstScreen Widget
+    initialRoute: '/',
+    routes: {
+      // When we navigate to the "/" route, build the FirstScreen Widget
+      '/': (context) => FirstScreen(),
+      // When we navigate to the "/second" route, build the SecondScreen Widget
+      '/second': (context) => SecondScreen(),
+    },
+  ));
+}
+
+class FirstScreen extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('First Screen'),
+      ),
+      body: Center(
+        child: RaisedButton(
+          child: Text('Launch screen'),
+          onPressed: () {
+            // Navigate to the second screen using a named route
+            Navigator.pushNamed(context, '/second');
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class SecondScreen extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text("Second Screen"),
+      ),
+      body: Center(
+        child: RaisedButton(
+          onPressed: () {
+            // Navigate back to the first screen by popping the current route
+            // off the stack
+            Navigator.pop(context);
+          },
+          child: Text('Go back!'),
+        ),
+      ),
+    );
+  }
+}
+```
+
+## 三、返回数据
+- 1）定义点击事件并定义一个变量接收返回的数据：
+```java
+class SelectionButton extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return RaisedButton(
+      onPressed: () {
+        _navigateAndDisplaySelection(context);
+      },
+      child: Text('Pick an option, any option!'),
+    );
+  }
+
+  // A method that launches the SelectionScreen and awaits the result from
+  // Navigator.pop
+  _navigateAndDisplaySelection(BuildContext context) async {
+    // Navigator.push returns a Future that will complete after we call
+    // Navigator.pop on the Selection Screen!
+    final result = await Navigator.push(
+      context,
+      // We'll create the SelectionScreen in the next step!
+      MaterialPageRoute(builder: (context) => SelectionScreen()),
+    );
+  }
+}
+```
+
+此时result变量用来等待获取 SelectionScreen返回的数据。
+- 2）SelectionScreen填充数据并返回：
+```java
+class SelectionScreen extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Pick an option'),
+      ),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: RaisedButton(
+                onPressed: () {
+                  // Pop here with "Yep"...
+                  Navigator.pop(context, 'Yep!');
+                },
+                child: Text('Yep!'),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: RaisedButton(
+                onPressed: () {
+                  // Pop here with "Nope"
+                  Navigator.pop(context, 'Nope!');
+                },
+                child: Text('Nope.'),
+              ),
+            )
+          ],
+        ),
+      ),
+    );
+  }
+}
+```
+
+- 3）更新数据显示及界面：
+```java
+_navigateAndDisplaySelection(BuildContext context) async {
+  final result = await Navigator.push(
+    context,
+    MaterialPageRoute(builder: (context) => SelectionScreen()),
+  );
+
+  // After the Selection Screen returns a result, hide any previous snackbars
+  // and show the new result!
+  Scaffold.of(context)
+    ..removeCurrentSnackBar()
+    ..showSnackBar(SnackBar(content: Text("$result")));
+}
+```
+
+完整示例：
+```java
+import 'package:flutter/material.dart';
+
+void main() {
+  runApp(MaterialApp(
+    title: 'Returning Data',
+    home: HomeScreen(),
+  ));
+}
+
+class HomeScreen extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Returning Data Demo'),
+      ),
+      body: Center(child: SelectionButton()),
+    );
+  }
+}
+
+class SelectionButton extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return RaisedButton(
+      onPressed: () {
+        _navigateAndDisplaySelection(context);
+      },
+      child: Text('Pick an option, any option!'),
+    );
+  }
+
+  // A method that launches the SelectionScreen and awaits the result from
+  // Navigator.pop!
+  _navigateAndDisplaySelection(BuildContext context) async {
+    // Navigator.push returns a Future that will complete after we call
+    // Navigator.pop on the Selection Screen!
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => SelectionScreen()),
+    );
+
+    // After the Selection Screen returns a result, hide any previous snackbars
+    // and show the new result!
+    Scaffold.of(context)
+      ..removeCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text("$result")));
+  }
+}
+
+class SelectionScreen extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Pick an option'),
+      ),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: RaisedButton(
+                onPressed: () {
+                  // Close the screen and return "Yep!" as the result
+                  Navigator.pop(context, 'Yep!');
+                },
+                child: Text('Yep!'),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: RaisedButton(
+                onPressed: () {
+                  // Close the screen and return "Nope!" as the result
+                  Navigator.pop(context, 'Nope.');
+                },
+                child: Text('Nope.'),
+              ),
+            )
+          ],
+        ),
+      ),
+    );
+  }
+}
+```
+
+## 四、向前传递数据
+其实传递数据只需要在第二个路由的构造函数里面定义需要的参数就行了：
+```java
+Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (context) => DetailScreen(todo: todos[index]),
+    ),
+  );
+```
+接收数据方：
+```java
+class DetailScreen extends StatelessWidget {
+  // Declare a field that holds the Todo
+  final Todo todo;
+
+  // In the constructor, require a Todo
+  DetailScreen({Key key, @required this.todo}) : super(key: key);
+}
+```
+完整示例：
+```java
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+
+class Todo {
+  final String title;
+  final String description;
+
+  Todo(this.title, this.description);
+}
+
+void main() {
+  runApp(MaterialApp(
+    title: 'Passing Data',
+    home: TodosScreen(
+      todos: List.generate(
+        20,
+        (i) => Todo(
+              'Todo $i',
+              'A description of what needs to be done for Todo $i',
+            ),
+      ),
+    ),
+  ));
+}
+
+class TodosScreen extends StatelessWidget {
+  final List<Todo> todos;
+
+  TodosScreen({Key key, @required this.todos}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Todos'),
+      ),
+      body: ListView.builder(
+        itemCount: todos.length,
+        itemBuilder: (context, index) {
+          return ListTile(
+            title: Text(todos[index].title),
+            // When a user taps on the ListTile, navigate to the DetailScreen.
+            // Notice that we're not only creating a DetailScreen, we're
+            // also passing the current todo through to it!
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => DetailScreen(todo: todos[index]),
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+class DetailScreen extends StatelessWidget {
+  // Declare a field that holds the Todo
+  final Todo todo;
+
+  // In the constructor, require a Todo
+  DetailScreen({Key key, @required this.todo}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    // Use the Todo to create our UI
+    return Scaffold(
+      appBar: AppBar(
+        title: Text("${todo.title}"),
+      ),
+      body: Padding(
+        padding: EdgeInsets.all(16.0),
+        child: Text('${todo.description}'),
+      ),
+    );
+  }
+}
+```

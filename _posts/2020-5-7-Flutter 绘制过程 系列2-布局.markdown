@@ -1,0 +1,437 @@
+---
+layout: post
+title:  "Flutter 绘制过程 系列2-布局"
+date:   2020-5-7 11:09:22 +0800
+categories: flutter
+---
+
+> 文章将同步到微信公众号:Android部落格
+
+流程图如下:
+![](https://ftp.bmp.ovh/imgs/2020/05/69d4b8b5191a046f.jpg)
+
+## 1、处理RootWidget
+### 1.1 scheduleAttachRootWidget
+回到runApp方法：
+> packages\flutter\lib\src\widgets\binding.dart
+
+```dart
+void runApp(Widget app) {
+  WidgetsFlutterBinding.ensureInitialized()
+    ..scheduleAttachRootWidget(app)
+    ..scheduleWarmUpFrame();
+}
+```
+看看scheduleAttachRootWidget方法，其实最终是调用了attachRootWidget方法，这里的rootWidget就是我们自己的widget：
+> packages\flutter\lib\src\widgets\binding.dart
+
+```dart
+void attachRootWidget(Widget rootWidget) {
+    _renderViewElement = RenderObjectToWidgetAdapter<RenderBox>(
+      container: renderView,
+      debugShortDescription: '[root]',
+      child: rootWidget,
+    ).attachToRenderTree(buildOwner, renderViewElement);
+}
+```
+### 1.2 RenderObjectToWidgetAdapter
+看看RenderObjectToWidgetAdapter的构造函数：
+> packages\flutter\lib\src\widgets\binding.dart
+
+```dart
+class RenderObjectToWidgetAdapter<T extends RenderObject> extends RenderObjectWidget {
+ widget to the [RenderView].
+  RenderObjectToWidgetAdapter({
+    this.child,
+    this.container,
+    this.debugShortDescription,
+  }) : super(key: GlobalObjectKey(container));
+```
+注释的描述是:A bridge from a [RenderObject] to an [Element] tree.从RenderObject到Element树的桥梁。
+
+child就是rootWidget,container就是在RendererBinding里面初始化的RenderView。
+
+#### 1.2.1 attachToRenderTree
+接下来看看怎么创建Element的，就是RenderObjectToWidgetAdapter的attachToRenderTree方法了：
+> packages\flutter\lib\src\widgets\binding.dart
+
+```dart
+RenderObjectToWidgetElement<T> attachToRenderTree(BuildOwner owner, [ RenderObjectToWidgetElement<T> element ]) {
+    if (element == null) {
+      owner.lockState(() {
+        element = createElement();
+        element.assignOwner(owner);
+      });
+      owner.buildScope(element, () {
+        element.mount(null, null);
+      });
+      SchedulerBinding.instance.ensureVisualUpdate();
+    } else {
+      element._newWidget = this;
+      element.markNeedsBuild();
+    }
+    return element;
+  }
+```
+这里的BuildOwner就是在WidgetsBinding里面初始化的BuildOwner对象。
+
+#### 1.2.2 createElement
+当第一次app第一次运行的时候，就会走element == null，因为调用的时候renderViewElement还没有初始化，另外一个分支调用的情景是在State中调用setState刷新的时候。看看createElement方法：
+> packages\flutter\lib\src\widgets\binding.dart
+
+```dart
+@override
+RenderObjectToWidgetElement<T> createElement() => RenderObjectToWidgetElement<T>(this);
+```
+第一次进来，创建一个根Element。
+
+> packages/flutter/lib/src/widgets/binding.dart
+
+```dart
+class RenderObjectToWidgetElement<T extends RenderObject> extends RootRenderObjectElement {
+  RenderObjectToWidgetElement(RenderObjectToWidgetAdapter<T> widget) : super(widget);
+}
+```
+创建了一个只能被root element使用的RenderObjectToWidgetElement对象。可见element就是RootRenderObjectElement的对象，并且RootRenderObjectElement继承自RenderObjectElement，这两个都是Element的子类。
+
+#### 1.2.3 mount
+回到attachToRenderTree方法中，接下来调用buildScope方法，其实最终调用的是element.mount：
+> engine\packages\flutter\lib\src\widgets\binding.dart\RenderObjectToWidgetElement
+
+```dart
+@override
+void mount(Element parent, dynamic newSlot) {
+    assert(parent == null);
+    super.mount(parent, newSlot);
+    _rebuild();
+}
+```
+super.mount做了如下操作，写在一个方法里面：
+
+```dart
+void mount(){
+    //Element start
+    _updateInheritance();
+    //Element end
+    
+    //RenderObjectElement start
+    super.mount();
+    _renderObject = widget.createRenderObject(this);
+    attachRenderObject(newSlot);
+    //RenderObjectElement end
+    
+    //RootRenderObjectElement start
+    super.mount();
+    //RootRenderObjectElement end
+}
+```
+从上往下调用，为第一个Widget创建了RenderObject，并把他依附到渲染树上。
+
+### 1.3 createRenderObject
+根据widget类型，调用对应Widget的createRenderObject方法，比如Stack继承自MultiChildRenderObjectWidget，此时调用它的createRenderObject方法：
+> MultiChildRenderObjectWidget
+
+```dart
+RenderStack createRenderObject(BuildContext context) {
+    return RenderStack(
+      alignment: alignment,
+      textDirection: textDirection ?? Directionality.of(context),
+      fit: fit,
+      overflow: overflow,
+    );
+}
+```
+RenderStack是RenderBox类型，而RenderBox继承自RenderObject。这个RenderStack对象包含了Stack布局相关的属性。
+
+### 1.4 attachRenderObject
+将RenderObject附着到渲染对象树上。
+> RenderObjectElement
+
+```dart
+@override
+void attachRenderObject(dynamic newSlot) {
+    _slot = newSlot;
+    _ancestorRenderObjectElement = _findAncestorRenderObjectElement();
+    _ancestorRenderObjectElement?.insertChildRenderObject(renderObject, newSlot);
+    final ParentDataElement<RenderObjectWidget> parentDataElement = _findAncestorParentDataElement();
+    if (parentDataElement != null)
+      _updateParentData(parentDataElement.widget);
+}
+```
+查找父类的Object，并把自己放到父类的渲染树下。例如如果程序中Stack的父Widget所属的Element是MultiChildRenderObjectElement，对应的insert方法是：
+> MultiChildRenderObjectElement
+
+```dart
+@override
+void insertChildRenderObject(RenderObject child, Element slot) {
+    final ContainerRenderObjectMixin<RenderObject, ContainerParentDataMixin<RenderObject>> renderObject = this.renderObject;
+    renderObject.insert(child, after: slot?.renderObject);
+}
+```
+又比如某个Widget所属的Element是SingleChildRenderObjectElement，对应的insert方法是：
+> SingleChildRenderObjectElement
+
+```dart
+@override
+void insertChildRenderObject(RenderObject child, dynamic slot) {
+    final RenderObjectWithChildMixin<RenderObject> renderObject = this.renderObject;
+    renderObject.child = child;
+}
+```
+当设置renderObject的child参数时，就会触发child变量的set方法：
+> RenderObjectWithChildMixin
+
+```dart
+ChildType get child => _child;
+set child(ChildType value) {
+    if (_child != null)
+      dropChild(_child);
+    _child = value;
+    if (_child != null)
+      adoptChild(_child);
+}
+```
+
+## 2、处理子渲染对象
+当该value不为空时，进入RenderObject的adoptChild方法：
+> RenderObject
+
+```dart
+@override
+void adoptChild(RenderObject child) {
+    setupParentData(child);
+    markNeedsLayout();
+    markNeedsCompositingBitsUpdate();
+    markNeedsSemanticsUpdate();
+    super.adoptChild(child);
+}
+```
+
+### 2.1 markNeedsLayout
+> RenderObject
+
+```dart
+void markNeedsLayout() {
+    if (_needsLayout) {
+      return;
+    }
+    if (_relayoutBoundary != this) {
+      markParentNeedsLayout();
+    } else {
+      _needsLayout = true;
+      if (owner != null) {
+        owner._nodesNeedingLayout.add(this);
+        owner.requestVisualUpdate();
+      }
+    }
+}
+```
+这个方法里面就两个判断，要么父Widget需要重新布局，要么Widget自身需要布局，如果需要布局就把自身加入到_nodesNeedingLayout这个List里面去，然后申请生成对应的渲染帧准备显示。
+
+### 2.2 markNeedsCompositingBitsUpdate
+
+```dart
+void markNeedsCompositingBitsUpdate() {
+    if (_needsCompositingBitsUpdate)
+      return;
+    _needsCompositingBitsUpdate = true;
+    if (parent is RenderObject) {
+      final RenderObject parent = this.parent;
+      if (parent._needsCompositingBitsUpdate)
+        return;
+      if (!isRepaintBoundary && !parent.isRepaintBoundary) {
+        parent.markNeedsCompositingBitsUpdate();
+        return;
+      }
+    }
+    // parent is fine (or there isn't one), but we are dirty
+    if (owner != null)
+      owner._nodesNeedingCompositingBitsUpdate.add(this);
+}
+```
+这个方法显示判断父RenderObject是否需要复合更新，如果需要，就不断向上递归遍历需要复合的RenderObject,同时将当前RenderObject添加到需要复合列表中。
+
+### 2.3 markNeedsSemanticsUpdate
+
+```dart
+void markNeedsSemanticsUpdate() {
+    if (!attached || owner._semanticsOwner == null) {
+      _cachedSemanticsConfiguration = null;
+      return;
+    }
+    final bool wasSemanticsBoundary = _semantics != null && _cachedSemanticsConfiguration?.isSemanticBoundary == true;
+    _cachedSemanticsConfiguration = null;
+    bool isEffectiveSemanticsBoundary = _semanticsConfiguration.isSemanticBoundary && wasSemanticsBoundary;
+    RenderObject node = this;
+    
+    while (!isEffectiveSemanticsBoundary && node.parent is RenderObject) {
+      if (node != this && node._needsSemanticsUpdate)
+        break;
+      node._needsSemanticsUpdate = true;
+    
+      node = node.parent;
+      isEffectiveSemanticsBoundary = node._semanticsConfiguration.isSemanticBoundary;
+      if (isEffectiveSemanticsBoundary && node._semantics == null) {
+        // We have reached a semantics boundary that doesn't own a semantics node.
+        // That means the semantics of this branch are currently blocked and will
+        // not appear in the semantics tree. We can abort the walk here.
+        return;
+      }
+    }
+    if (node != this && _semantics != null && _needsSemanticsUpdate) {
+          owner._nodesNeedingSemantics.remove(this);
+    }
+    if (!node._needsSemanticsUpdate) {
+      node._needsSemanticsUpdate = true;
+      if (owner != null) {
+        owner._nodesNeedingSemantics.add(node);
+        owner.requestVisualUpdate();
+      }
+    }
+}
+```
+
+循环查找需要更新的节点，同时将已经存在的旧节点删除，并把需要更新语义的节点添加到需要更新节点List中。
+
+这里的语义可以理解为：渲染树有关的属性构成需要更新渲染的词汇，渲染的规则就是语法，最终通过一系列的检查判断当前的渲染树是否正确。
+
+### 2.4 super.adoptChild
+> AbstractNode
+
+```dart
+void adoptChild(covariant AbstractNode child) {
+    child._parent = this;
+    if (attached)
+      child.attach(_owner);
+    redepthChild(child);
+}
+
+void redepthChild(AbstractNode child) {
+    assert(child.owner == owner);
+    if (child._depth <= _depth) {
+      child._depth = _depth + 1;
+      child.redepthChildren();
+    }
+}
+```
+更新了节点深度参数_depth。
+
+## 3、循环递归创建child
+### 3.1 _rebuild
+回到RenderObjectToWidgetElement的mount方法中。接下来执行_rebuild方法：
+
+```dart
+void _rebuild() {
+    try {
+      _child = updateChild(_child, widget.child, _rootChildSlot);
+    }
+}
+```
+调用updateChild方法，widget.child就是我们自己写的widget，叫做rootWidget，看看这个updateChild方法：
+> packages\flutter\lib\src\widgets\framework.dart\Element
+
+```dart
+@protected
+Element updateChild(Element child, Widget newWidget, dynamic newSlot) {
+    if (newWidget == null) {//判断1
+        if (child != null)//判断2
+            deactivateChild(child);
+        return null;
+    }
+    
+    if (child != null) {//判断3
+        if (child.widget == newWidget) {//判断4
+            if (child.slot != newSlot)//判断5
+                updateSlotForChild(child, newSlot);
+            return child;
+        }
+        
+        if (Widget.canUpdate(child.widget, newWidget)) {//判断6
+            if (child.slot != newSlot)//判断7
+                updateSlotForChild(child, newSlot);
+            child.update(newWidget);
+            return child;
+        }
+        
+        deactivateChild(child); 
+    }
+    return inflateWidget(newWidget, newSlot);
+}
+```
+在执行这些判断之前先要清楚方法参数的含义。child是指上一次旧的Element，且持有一个旧的Widget；newWidget是新传递过来的Widget；newSlot是父Element的属性标识。
+
+- 判断1 如果新传递过来的newWidget为null，表示这个widget已经从视图里面被删除了，判断2对应的，旧的Widget也要从Element里面被删掉。
+- 判断3,4,5 旧的child不为空，而新旧widget没有变化，但是他们所属的父slot属性变化了，只需要跟新一下slot就行了
+- 判断6,7 如果两个widget的runType和key相同，意味着两个widget在同一个位置上，此时如果slot不相等，只需要更新child的slot，同时用新的widget替换掉child就可以了。
+- 执行deactivateChild的条件是，新旧widget都不为空，也不相等，也不在同一个位置，意味着此处的widget发生了改变，需要将旧的child从渲染树删除，将其置为不活跃，同时开始将新的widget填充到渲染树。
+- 直接执行inflateWidget意味着，widget要开始填充到渲染树了。
+
+### 3.2 inflateWidget
+
+```dart
+@protected
+Element inflateWidget(Widget newWidget, dynamic newSlot) {
+    final Key key = newWidget.key;
+    if (key is GlobalKey) {
+        final Element newChild = _retakeInactiveElement(key, newWidget);
+        if (newChild != null) {
+            newChild._activateWithParent(this, newSlot);
+            final Element updatedChild = updateChild(newChild, newWidget, newSlot);
+            return updatedChild;
+        }
+    }
+    final Element newChild = newWidget.createElement();
+    newChild.mount(this, newSlot);
+    return newChild;
+}
+```
+GlobalKey是整个app里面唯一的key，用于标识Element。他对外提供与elements相关的一些对象，比如BuildContext,State。
+
+当Widget的key是GlobalKey的时候，当他从一个渲染树的一个位置移到另一个位置的时候，就会将自己的子树重新设置父类。重新设置父类的时候，一个新的widget到达新的位置其实是复用了被删除的旧位置widget的动画帧。
+
+通过上面的解释大概可以知道_retakeInactiveElement里面执行的操作就是，获取key里面的Element，并找到他的parent，如果他不为空，那么就从parent中将这个element删掉，同时从不活跃列表里面也删掉，此时将新的element重新找到归属父类，并继续找到自己的子child。另外一种情况是key里面没有注册element，并且新旧widget不相等，意味着不需要更改位置，接着把newWidget放到渲染树就行。
+
+### 3.3 createElement & mount
+执行这两个方法，就看我们自己定义的Widget是什么类型了。比如StatefulWidget就会执行createElement方法返回一个StatefulElement对象。
+
+而mount方法，则会执行ComponentElement的mount方法。
+
+#### 3.3.1 ComponentElement mount
+> packages\flutter\lib\src\widgets\framework.dart
+
+```dart
+@override
+void mount(Element parent, dynamic newSlot) {
+    super.mount(parent, newSlot);
+    _firstBuild();
+}
+
+void _firstBuild() {
+    rebuild();
+}
+
+void rebuild() {
+    performRebuild();
+}
+
+@protected
+void performRebuild();
+```
+还是回到ComponentElement类的performRebuild方法：
+
+```dart
+@override
+void performRebuild() {
+    Widget built = build();
+    _child = updateChild(_child, built, slot);
+}
+```
+build先调用到StatefulElement或StatelessElement的build方法，然后通过Element调用到对应的State或StatelessWidget的build方法。
+
+然后重新调用updateChild，如果我们的Widget有多重嵌套的话，就以此重复。
+
+纵观上述流程就是不断遍历Widget下的child，每个child创建一个Element,在Element的mount方法中，创建RenderObject，并将RenderObject一个一个从上到下加入到渲染对象树中。
+
+> 微信公众号
+
+![](https://ftp.bmp.ovh/imgs/2020/04/f472fa7e9c62a8c7.jpg)
