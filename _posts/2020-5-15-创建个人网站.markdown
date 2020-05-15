@@ -1,0 +1,339 @@
+---
+layout: post
+title:  "创建个人网站"
+date:   2020-5-15 19:27:22 +0800
+categories: 其他
+---
+
+
+## 1、方案
+采用Github Pages + Jekyll的方式。
+
+## 2、安装Jekyll环境
+### 2.1 安装Ruby
+
+因为网络的原因，Ruby installer安装文件难得下载，下载网址是：
+[https://rubyinstaller.org/downloads/](https://rubyinstaller.org/downloads/)或[https://github.com/oneclick/rubyinstaller2/releases](https://github.com/oneclick/rubyinstaller2/releases)
+
+### 2.2 下载RubyGems
+下载地址是：[https://rubygems.org/pages/download](https://rubygems.org/pages/download)
+
+下载完成之后解压到本地，假设解压目录是E:\RubyGems。进入该目录执行：ruby setup.rb
+
+### 2.3 安装Jekyll
+
+完成之后安装Jekyll：gem install jekyll。如果安装失败按照RubyGems中国镜像网站调整下载源：
+
+https://gems.ruby-china.com/
+
+切换方法是：gem sources --add https://gems.ruby-china.com/ --remove https://rubygems.org/
+
+到这里就安装成功了。
+
+## 3、Github Pages
+注册一个github账号，起一个id，假设名称是lily。然后新建一个repository,名字必须是 *lily.github.io*。在当前repository的Settings选项中，可以设置主题，强制https访问等。另外这个repository必须是public。
+
+到这里Github默认为我们创建了一个_config.yml文件，这个文件可以做网站的一些配置。
+
+## 4、定制自己的静态网站
+### 4.1 新建
+
+在PC上某个文件夹下，用cmd命令行新建一个Jekyll静态网站，命令是：jekyll new yourblogname。
+
+再执行jekyll server，成功之后就可以在本地生成一个网站相关的页面了，在浏览器输入http://127.0.0.1:4000/，即可访问。
+
+### 4.2 定制
+_config.yml文件可以做一些网站的详细配置，基础的配置项如下：
+```yml
+title: your website title
+SEOTitle: seo title
+header-img: header in explorer
+description: your description
+locale: zh
+email: "email number"
+url: "your own domain address"
+baseurl: ""
+social:
+  github: "github number"
+
+
+# Build settings
+#theme: minima
+markdown: kramdown
+highlighter: rouge
+remote_theme: we can use remote theme in github by formatter:githubname/themename
+permalink: /blog/:title:output_ext
+timezone: Asia/Shanghai
+defaults:
+  -
+    scope:
+      path: ""
+      type: "pages" //layout type
+    values:
+      layout: "page" //correspond to layout
+      keywords: keywords description
+      description: description
+  -
+    scope:
+      path: ""
+      type: "posts" //layout type
+    values:
+      layout: "post" //correspond to layout
+plugins:
+  - jekyll-feed
+
+# Theme Settings
+logo: /assets/logo.svg
+rss: "/feed.xml" // subscribe
+theme_setting:
+  blog_page: "index.markdown" //detail file
+  about_page: "about.markdown" //detail file
+  archive_page: "archive.markdown" //detail file
+  nav_pages:
+    - "about.markdown" //detail file
+    - "archive.markdown" //detail file
+
+# Gitalk
+gitalk:
+  enable: true    #is open Gitalk comment
+  clientID:         #clientID from Gitalk
+  clientSecret:     #clientSecret from Gitalk
+  repo: github repo name,such as "lily.github.io"    #github repo name
+  owner: github name    #lily
+  admin: github name    #lily
+  distractionFreeMode: true #shadow
+
+# Analytics settings
+# Baidu Analytics
+ba_track_id: id from baidu
+
+# Google Analytics
+ga_track_id: 'id from google'            # Format: UA-xxxxxx-xx
+ga_domain: your domain name
+```
+本人引用的主题是erlzhang/jekyll-theme-persephone，主题的github地址是：https://github.com/erlzhang/jekyll-theme-persephone。
+
+按照主题的要求，分别在我本机网站目录下新建了index.markdown，about.markdown，archive.markdown。分别表示首页，关于页，归档页。
+
+而在_config.yml的Theme Settings theme_setting配置中，必须按照上述文件布置排列，否则相关页面不能正确导航。
+
+这里一些参数涉及到Jekyll的相关配置知识，可以参考：http://jekyllcn.com/docs/usage/
+
+#### 4.2.2 博客样式
+在index.markdown文件中，可以设置当前主页的形式，本人这边引用的是博客样式，如下：
+```
+---
+# Feel free to add content and custom Front Matter to this file.
+# To modify the layout, see https://jekyllrb.com/docs/themes/#overriding-theme-defaults
+
+#layout: home
+
+layout: "blog"
+---
+
+```
+
+#### 4.2.3 创建博客文件夹
+博客目录是_post，直接在网站文件夹目录下创建这个文件夹。以后要写的博客就在这里了。
+
+#### 4.2.4 写博客
+博客以markdown的形式撰写，文件名称必须按照：yyyy-MM-dd-博客标题。例如：2020-4-27-博客测试文章.markdown
+
+写完之后，内容还有些不一样，内容必须按照如下规范：
+```
+---
+layout: post
+title:  "博客测试文章"
+date:   2020-4-27 16:48:22 +0800
+categories: your category
+---
+
+博客正文
+```
+
+这里的layout表示文章是post文件类型；title就是后续网站要显示的标题；还有subtitle可以设置；categories就是网站上要展示的分类了；博客正文用markdown写就行了。
+
+#### 4.2.5 为博客添加评论
+这里评论以Gitalk为例，其github地址是https://github.com/gitalk/gitalk。这里的评论其实是给你博客所在github的repo提issue。
+
+先为网站（lily.github.io）注册一个Application,地址是：https://github.com/settings/applications/new。
+
+注册完成之后就会有一个clientID，和clientSecret，填到_config_yml的# Gitalk对应的位置就可以了。另外注册时，如果是使用lily.github.io，就填全称：https://lily.github.io；如果是自己的域名，就使用域名的网址，也要填全称。
+
+接下来就是将博客控件添加到博客模板文件中，这个模板文件在远程主题中。这里就要fork一下远程主题到自己的github中了。
+
+fork之后，clone到本地，然后进入到jekyll-theme-persephone\\_layouts文件夹下，找到post.html文件，这个就是我们博客的模板，在article节点的最后添加：
+```html
+<!--Gitalk start  -->
+{% if site.gitalk.enable %}
+<!-- 引入Gitalk评论插件  -->
+<link rel="stylesheet" href="https://unpkg.com/gitalk/dist/gitalk.css">
+<script src="https://unpkg.com/gitalk/dist/gitalk.min.js"></script>
+<div id="gitalk-container"></div>
+<!-- 引入一个生产md5的js，用于对id值进行处理，防止其过长 -->
+<!-- Thank DF:https://github.com/NSDingFan/NSDingFan.github.io/issues/3#issuecomment-407496538 -->
+<script src="{{ site.baseurl }}/js/md5.min.js"></script>
+<script type="text/javascript">
+    var gitalk = new Gitalk({
+    clientID: '{{site.gitalk.clientID}}',
+    clientSecret: '{{site.gitalk.clientSecret}}',
+    repo: '{{site.gitalk.repo}}',
+    owner: '{{site.gitalk.owner}}',
+    admin: ['{{site.gitalk.admin}}'],
+    distractionFreeMode: {{site.gitalk.distractionFreeMode}},
+    id: md5(location.pathname),
+    });
+    gitalk.render('gitalk-container');
+</script>
+{% endif %}
+<!-- Gitalk end -->
+```
+site.后面的那些变量就是我们在_config.yml中配置的变量，而这个模板会在每篇博客的底部生成一个评论视图，评论之前要用github登录，也就缩小了评论人群。
+
+这个md5.min.js文件，放在网站所在文件目录下的js文件夹中。
+
+#### 4.2.6 为博客添加访问统计
+基本就是百度统计和google统计了。
+
+注册百度统计账号，[https://tongji.baidu.com/](https://tongji.baidu.com/)，填入要统计的域名，得到一段代码。
+
+注册google统计账号，[https://analytics.google.com/](https://analytics.google.com/)，填入要统计的域名，得到一段代码。
+
+将上述得到的两段代码填写到jekyll-theme-persephone\\_includes\footer.html文件中：
+
+```html
+<!-- Baidu Tongji -->
+{% if site.ba_track_id %}
+<script>
+    //
+    var _baId = '{{ site.ba_track_id }}';
+
+    // Originial
+    var _hmt = _hmt || [];
+    (function() {
+      var hm = document.createElement("script");
+      hm.src = "//hm.baidu.com/hm.js?" + _baId;
+      var s = document.getElementsByTagName("script")[0];
+      s.parentNode.insertBefore(hm, s);
+    })();
+</script>
+{% endif %}
+
+<!-- Google Analytics -->
+{% if site.ga_track_id %}
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=your id"></script>
+<script>
+  var _gaId = '{{ site.ga_track_id }}';
+  var _gaDomain = '{{ site.ga_domain }}';
+
+
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'your id');
+  
+  ga('create', _gaId, _gaDomain);
+  ga('send', 'pageview');
+</script>
+{% endif %}
+```
+可以看到这里的ba_track_id和google统计的id也是可以定义在_config.yml文件中，然后通过site引用的。
+
+#### 4.2.7 为博客添加目录
+在博客标题之下，正文之上创建目录，可以方便定位到需要阅读的位置。方法参考：https://gist.github.com/cloudsben/6059930。
+
+打开这个网址，将md-menu.html文件内容保存到toc.html，然后copy到jekyll-theme-persephone\\_includes下，这里我们对原文做一点小改动，添加h1到目录：
+> 原内容
+
+```html
+<link rel="stylesheet" href="http://yandex.st/highlightjs/6.2/styles/googlecode.min.css">
+ 
+<script src="http://code.jquery.com/jquery-1.7.2.min.js"></script>
+<script src="http://yandex.st/highlightjs/6.2/highlight.min.js"></script>
+ 
+<script>hljs.initHighlightingOnLoad();</script>
+<script type="text/javascript">
+ $(document).ready(function(){
+      $("h2,h3,h4,h5,h6").each(function(i,item){
+        var tag = $(item).get(0).localName;
+        $(item).attr("id","wow"+i);
+        $("#category").append('<a class="new'+tag+'" href="#wow'+i+'">'+$(this).text()+'</a></br>');
+        $(".newh2").css("margin-left",0);
+        $(".newh3").css("margin-left",20);
+        $(".newh4").css("margin-left",40);
+        $(".newh5").css("margin-left",60);
+        $(".newh6").css("margin-left",80);
+      });
+ });
+</script>
+<div id="category"></div>
+```
+> 修改后
+
+```html
+<link rel="stylesheet" href="{{ site.baseurl }}/js/googlecode.min.css">
+
+<script src="{{ site.baseurl }}/js/jquery-1.7.2.min.js"></script>
+<script src="{{ site.baseurl }}/js/highlight.min.js"></script>
+
+<script>hljs.initHighlightingOnLoad();</script>
+<script type="text/javascript">
+ $(document).ready(function(){
+      $("h1,h2,h3,h4,h5,h6").each(function(i,item){
+        var tag = $(item).get(0).localName;
+        $(item).attr("id","wow"+i);
+        $("#category").append('<a class="new'+tag+'" href="#wow'+i+'">'+$(this).text()+'</a></br>');
+        $(".newh1").css("margin-left",0);
+        $(".newh2").css("margin-left",20);
+        $(".newh3").css("margin-left",40);
+        $(".newh4").css("margin-left",60);
+        $(".newh5").css("margin-left",80);
+        $(".newh6").css("margin-left",100);
+      });
+ });
+</script>
+<div id="category"></div>
+```
+可以看到我这里把两个js文件和一个css文件下载到本地了，也就是我们自己网站的js文件夹下。这里需要提醒下，远程引用主题时，有两个repo，一个是网站的repo（your blog repo name），一个是主题的repo（jekyll-theme-persephone）。这里的三个文件被我下到本地放到网站的repo下了。这样做的目的是为了加快目录展示速度。
+
+接下来引用这个toc.html，在jekyll-theme-persephone\\_layouts\post.html文件中的```<div class="post__content content">```节点下添加```{% include toc.html html=content %}```，添加后如下：
+```html
+<div class="post__content content">
+  {% include toc.html html=content %}
+  {{ content | img_prefix }}
+</div>
+```
+
+到这里就ok了。
+
+这里所有对主题的修改要记得push到自己github下的主题repo里面去，我这里是jekyll-theme-persephone。
+
+到这里基本上就完成个人网站了，将个人网站下的所有文件push到yourname.github.io（比如：lily.github.io）下，然后在浏览器输入yourname.github.io就可以访问自己的网站了。
+
+## 5、为网站设置个人域名
+### 5.1 购买域名
+在腾讯云或阿里云都可以购买，你中意的那个域名在两个云上可能价格不一样，我是捡便宜的买。最终购买了[chengang.plus](chengang.plus)。
+
+购买完成，审核通过，备案通过，添加解析，可以添加www和@方式解析，意味着www.yourdomain和yourdomain都可以解析到yourdomain。解析ip，就是你yourname.github.io的ip，在PC的cmd命令行里面ping一下这个网址就可以输入对应的ip了，直接把IP填到两个解析方式里面去，就ok了。
+
+另外腾讯云有一个一年免费的https SSL证书，先申请，审核通过之后就可以在自己域名前面加https了。
+
+### 5.2 将域名应用到个人网站
+在个人网站的repo下，选择Settings，有一个domain选项，直接设置自己的域名，不用加http或https。然后如果申请了SSL证书，可以Enforce Https。
+
+## 6、网站本地调试
+Jekyll支持本地调试，在网站相关文件都准备完毕之后，可以在网站文件目录下，cmd执行：bundle exec jekyll serve。执行完成之后，在浏览器输入：http://127.0.0.1:4000/ 即可访问。
+
+### 问题1
+**Error:  Permission denied - bind(2) for 127.0.0.1:4000**
+
+127.0.0.1:4000被占用了，在cmd输入：netstat -aon | findstr "4000"，找到被占用的进程，在PC的任务管理器中找到该进程号，然后结束任务即可，再执行bundle exec jekyll serve即可。
+
+### 问题2
+**网站突然打不开了**
+
+如果是自己的域名，先ping一下yourname.github.io，看看输出的IP跟自己域名解析的IP是否一致，不一致，更换再访问；如果是yourname.github.io，检查下自己能不能访问github。
+
+
