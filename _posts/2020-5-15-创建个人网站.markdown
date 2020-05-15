@@ -44,6 +44,7 @@ https://gems.ruby-china.com/
 
 ### 4.2 定制
 _config.yml文件可以做一些网站的详细配置，基础的配置项如下：
+
 ```yml
 title: your website title
 SEOTitle: seo title
@@ -163,6 +164,7 @@ categories: your category
 接下来就是将博客控件添加到博客模板文件中，这个模板文件在远程主题中。这里就要fork一下远程主题到自己的github中了。
 
 fork之后，clone到本地，然后进入到jekyll-theme-persephone\\_layouts文件夹下，找到post.html文件，这个就是我们博客的模板，在article节点的最后添加：
+
 ```html
 <!--Gitalk start  -->
 {% if site.gitalk.enable %}
@@ -201,7 +203,7 @@ site.后面的那些变量就是我们在_config.yml中配置的变量，而这�
 
 将上述得到的两段代码填写到jekyll-theme-persephone\\_includes\footer.html文件中：
 
-```html
+```
 <!-- Baidu Tongji -->
 {% if site.ba_track_id %}
 <script>
@@ -239,6 +241,7 @@ site.后面的那些变量就是我们在_config.yml中配置的变量，而这�
 </script>
 {% endif %}
 ```
+
 可以看到这里的ba_track_id和google统计的id也是可以定义在_config.yml文件中，然后通过site引用的。
 
 #### 4.2.7 为博客添加目录
@@ -247,7 +250,7 @@ site.后面的那些变量就是我们在_config.yml中配置的变量，而这�
 打开这个网址，将md-menu.html文件内容保存到toc.html，然后copy到jekyll-theme-persephone\\_includes下，这里我们对原文做一点小改动，添加h1到目录：
 > 原内容
 
-```html
+```
 <link rel="stylesheet" href="http://yandex.st/highlightjs/6.2/styles/googlecode.min.css">
  
 <script src="http://code.jquery.com/jquery-1.7.2.min.js"></script>
@@ -272,7 +275,7 @@ site.后面的那些变量就是我们在_config.yml中配置的变量，而这�
 ```
 > 修改后
 
-```html
+```
 <link rel="stylesheet" href="{{ site.baseurl }}/js/googlecode.min.css">
 
 <script src="{{ site.baseurl }}/js/jquery-1.7.2.min.js"></script>
@@ -296,15 +299,12 @@ site.后面的那些变量就是我们在_config.yml中配置的变量，而这�
 </script>
 <div id="category"></div>
 ```
+
 可以看到我这里把两个js文件和一个css文件下载到本地了，也就是我们自己网站的js文件夹下。这里需要提醒下，远程引用主题时，有两个repo，一个是网站的repo（your blog repo name），一个是主题的repo（jekyll-theme-persephone）。这里的三个文件被我下到本地放到网站的repo下了。这样做的目的是为了加快目录展示速度。
 
-接下来引用这个toc.html，在jekyll-theme-persephone\\_layouts\post.html文件中的```<div class="post__content content">```节点下添加```{% include toc.html html=content %}```，添加后如下：
-```html
-<div class="post__content content">
-  {% include toc.html html=content %}
-  {{ content | img_prefix }}
-</div>
-```
+接下来引用这个toc.html，在jekyll-theme-persephone\\_layouts\post.html文件中的content节点下添加“include toc.html html=content”，添加后如下：
+
+![示例](https://ftp.bmp.ovh/imgs/2020/05/37da45c580219d7d.png)
 
 到这里就ok了。
 
