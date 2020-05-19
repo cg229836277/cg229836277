@@ -329,7 +329,7 @@ Jekyll支持本地调试，在网站相关文件都准备完毕之后，可以�
 ### 问题1
 **Error:  Permission denied - bind(2) for 127.0.0.1:4000**
 
-127.0.0.1:4000被占用了，在cmd输入：netstat -aon | findstr "4000"，找到被占用的进程，在PC的任务管理器中找到该进程号，然后结束任务即可，再执行bundle exec jekyll serve即可。
+127.0.0.1:4000被占用了，在cmd输入：netstat -aon \| findstr "4000"，找到被占用的进程，在PC的任务管理器中找到该进程号，然后结束任务即可，再执行bundle exec jekyll serve即可。
 
 ### 问题2
 **网站突然打不开了**
