@@ -1,6 +1,6 @@
 ---
 layout: post
-title:  "flutter InheritedWidget机制"
+title:  "Flutter InheritedWidget机制"
 date:   2020-5-19 18:19:25 +0800
 categories: flutter
 ---

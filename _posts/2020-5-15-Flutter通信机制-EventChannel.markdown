@@ -1,6 +1,6 @@
 ---
 layout: post
-title:  "flutter通信机制-EventChannel"
+title:  "Flutter通信机制-EventChannel"
 date:   2020-5-15 16:48:22 +0800
 categories: flutter
 ---
