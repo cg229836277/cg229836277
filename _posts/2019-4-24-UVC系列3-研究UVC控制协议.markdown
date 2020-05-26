@@ -1,0 +1,74 @@
+---
+layout: post
+title:  "UVC系列3-研究UVC控制协议"
+date:   2019-4-24 18:19:25 +0800
+categories: Android
+---
+
+
+> 微信公众号：Android部落格
+
+## 1、左右相对控制参数
+上一篇文章主要讲述了在android kernel层的控制参数，并没有讲这些参数的具体含义，为什么是这些参数。这里主要深入了解一下UVC协议，是一份PDF文档。
+
+```c
+{
+.entity         =UVC_GUID_UVC_CAMERA,
+.selector     = UVC_CT_PANTILT_RELATIVE_CONTROL,
+.index         =12,
+.size           =4,
+.flags          =UVC_CTRL_FLAG_SET_CUR 
+		   | UVC_CTRL_FLAG_GET_MIN
+           | UVC_CTRL_FLAG_GET_MAX 
+           |UVC_CTRL_FLAG_GET_RES
+           | UVC_CTRL_FLAG_GET_DEF
+           | UVC_CTRL_FLAG_AUTO_UPDATE,
+}
+```
+`struct uvc_control_info uvc_ctrls[]`结构体其中一个控制参数，可以结合协议看看。
+UVC协议定义如下：
+![](https://user-gold-cdn.xitu.io/2020/5/26/1724eb0f8214bb73?w=823&h=545&f=webp&s=15948)
+可以看到`UVC_CT_PANTILT_RELATIVE_CONTROL`与`CT_PANTILT_RELATIVE_CONTROL`是对应的，并不是随便定义的，另外这个参数定义的地方在：
+
+```c
+include /uapi/linux/usb,
+#define UVC_CT_PANTILT_RELATIVE_CONTROL                  0x0e
+```
+这样一来，这这个控制参数里面的定义都是与协议对应起来的。size=4，是指控制位的长度，为什么等于4，可以从协议的定义里面知道，如下：
+![](https://user-gold-cdn.xitu.io/2020/5/26/1724eb1a19e16734?w=849&h=795&f=webp&s=16598)
+
+可以看到wLength=4，总共的控制字节位数为4，分别是相对pan控制位，相对pan速度控制位，相对tilt控制位，相对tilt速度控制位。另外pan和tilt控制位对应的值类似，0表示停止，1表示顺时针或向上，0xff表示逆时针或向下，速度控制位表示实际转动的速度。
+
+## 2、添加左右相对控制参数
+上一篇文章里面讲到了zoom的控制函数，如下：
+
+```c
+staticvoid uvc_ctrl_set_zoom(struct uvc_control_mapping *mapping,__s32 value,__u8 *data)
+{
+	data[0] =value == 0 ? 0 : (value > 0) ? 1 : 0xff;
+	data[2] =min((int)abs(value), 0xff);
+}
+```
+在协议里面也可以找到对应的定义，如下：
+![](https://user-gold-cdn.xitu.io/2020/5/26/1724eb35c693aaff?w=855&h=281&f=webp&s=7786)
+为什么值等于0，1，0xff，为什么是data[0]和data[2]而不是data[1]就一目了然了。
+
+由此开始大概知道了怎么定制kernel层去支持摄像头做PTZ操作了。定制之前要搞清楚当前UVC协议的版本，以及当前手上的摄像头支持哪些控制参数。
+
+### 2.1 查看UVC协议的版本在kernel层有定义，具体文件目录是：
+> drivers/media/usb/uvc/uvcvide0.h
+
+`#define DRIVER_VERSION               "1.1.1"`
+
+查看UVC版本是为了与摄像头厂商协调的时候需要用到，有可能摄像头厂商的协议与android uvc的协议不一致，这个时候就需要摄像头厂商改成android uvc的协议版本了，不同的版本数据位长度可能不一样，直观的反应在控制的时候出现只能控制往一边转，不能反方向转动或者转起来就停不了。当然也需要摄像头厂商配合修改，如果摄像头厂商比较高冷就要磨嘴皮子了。
+
+### 2.2 查看摄像头支持哪些参数可以借助ubuntu上面的uvcdyctrl工具查看
+> 具体指令可以参考一下网址：http://www.linux-commands-examples.com/uvcdynctrl
+
+在摄像头连接到ubuntu之后，查看dev下是否生成了video0节点，如果生成了的话，可以执行：`uvcdynctrl --device=video0 –list`
+
+此时可以看到输出的数据里面包含了每个控制参数的最大值，最小值，步长，名称等信息。实际上这个工具就是通过uvc协议写的，也就是说只要这个工具可以控制，那么定制化开发应该也没有啥大的问题了。 
+另外遇到的UVC各种结构体参数可以通过以下网址查看具体含义：
+https://www.linuxtv.org/downloads/legacy/video4linux/API/V4L2_API/spec-single/v4l2.html
+
+微信公众号:Android部落格
