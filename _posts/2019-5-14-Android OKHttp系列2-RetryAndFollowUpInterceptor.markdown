@@ -84,7 +84,7 @@ private void resetNextProxy(HttpUrl url, Proxy proxy) {
 重点看看`followUpRequest`方法，在该方法中差异化处理状态码`Response.code`，并根据不同的code对请求Header做了处理。Http状态码列表如下（https://developer.mozilla.org/zh-CN/docs/Web/HTTP/Status/）：
 
 |状态码 | 状态码英文名称 | 中文描述| 
-| :-----: | :----  | :---- | :---- |
+| ----- | :----  | :---- | :---- |
 |100 |	Continue	 |继续。客户端应继续其请求 |
 |101 |	Switching Protocols |	切换协议。服务器根据客户端的请求切换协议。只能切换到更高级的协议，例如，切换到HTTP的新版本协议 |
 |200 |  OK	 |请求成功。一般用于GET与POST请求 |
