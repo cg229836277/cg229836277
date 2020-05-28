@@ -7,12 +7,17 @@ categories: Android
 
 
 > 文章将会被同步至微信公众号：Android部落格 
+
 ## 1、概述
+
 > 选定连接接口，并开始连接目标
 
 流程图如下：
+
 ![在这里插入图片描述](https://img-blog.csdnimg.cn/20200331152702929.jpg?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3UwMTExOTg3NjQ=,size_16,color_FFFFFF,t_70#pic_center)
+
 > 原图片地址：https://ftp.bmp.ovh/imgs/2020/03/51f7b29036eb433b.jpg
+
 ### 1.1 找RealConnection
 
 选择合适的HttpCodec，为什么要选择呢？因为涉及到Http版本的问题，此处需要兼容，先看代码：
@@ -49,7 +54,9 @@ new RealConnection(connectionPool, selectedRoute);
 List<ConnectionSpec> connectionSpecs = route.address().connectionSpecs();
 ```
 需要注意以下几个问题：
+
 - TLS协议
+
 这个值请求的时候如果不设置的话，默认是：
 
 ```java
@@ -60,6 +67,7 @@ static final List<ConnectionSpec> DEFAULT_CONNECTION_SPECS = Util.immutableList(
 > TLS协议可以参考http://www.ruanyifeng.com/blog/2014/02/ssl_tls.html
 
 - Https SSL认证
+
 > 参考 http://frank-zhu.github.io/android/2014/12/26/android-https-ssl/
 
 一般客户端验证SSL有两种方式，一种是通过SSLSocketFactory方式创建，需要设置域名及端口号(适应于HttpClient请求方式)，一种是通过SSLContext方式创建(适用于HttpsURLConnection请求方式).
@@ -82,7 +90,9 @@ private Address createAddress(HttpUrl url) {
 }
 ```
 下面三个参数只在是https请求的时候才设置：
+
 - `sslSocketFactory`是SSL认证；
+
 如果请求的时候不设置，sdk在`OkHttpClient`类中默认设置：
 
 ```java
@@ -95,15 +105,21 @@ if (builder.sslSocketFactory != null || !isTLS) {
   this.certificateChainCleaner = CertificateChainCleaner.get(trustManager);
 }
 ```
+
 - `hostnameVerifier`是主机名称验证；
+
 > 一、概述
 >
->位于javax.net.ssl包下。声明：public interface HostnameVerifier
-此类是用于主机名验证的基接口。
-在握手期间，如果 URL 的主机名和服务器的标识主机名不匹配，则验证机制可以回调此接口的实现程序来确定是否应该允许此连接。
-策略可以是基于证书的或依赖于其他验证方案。
-当验证 URL 主机名使用的默认规则失败时使用这些回调。
+> 位于javax.net.ssl包下。
 >
+> 声明：'public interface HostnameVerifier'
+>
+> 此类是用于主机名验证的基接口。
+> 在握手期间，如果 URL 的主机名和服务器的标识主机名不匹配，则验证机制可以回调此接口的实现程序来确定是否应该允许此连接。
+> 策略可以是基于证书的或依赖于其他验证方案。
+> 当验证 URL 主机名使用的默认规则失败时使用这些回调。
+
+
 > 二、方法
 >
 > public boolean verify(String hostname,SSLSession session)
@@ -141,6 +157,7 @@ CertificatePinner(Set<Pin> pins, @Nullable CertificateChainCleaner certificateCh
 ```
 
 ### 1.2 开始连接
+
 > 可以认为是握手过程
 
 核心代码是：
@@ -165,6 +182,7 @@ while (true) {
 }
 ```
 - 是否需要隧道连接
+
 对应的代码片段是`route.requiresTunnel`：
 
 ```java
@@ -203,16 +221,20 @@ for (int i = 0; i < MAX_TUNNEL_ATTEMPTS; i++) {
 如果不需要隧道连接就一步，创建socket对象并连接。
 
 ### 1.3 获取Http协议版本
+
 核心是分条件创建两个实现HttpCodec接口的类，分别是Http1Codec（HTTP/1.1）和Http2Codec（HTTP/2）。
+
 > 他们的区别是：https://mjd507.github.io/2018/01/20/HTTP-Versions/
 
 ##### 1.3.1 选择协议版本
+
 - 是否包含`Protocol.H2_PRIOR_KNOWLEDGE`
+
 > 参考 https://http2.github.io/http2-spec/#known-http
 >
->A client MUST send the connection preface (Section 3.5) and then MAY immediately send HTTP/2 frames to such a server; servers can identify these connections by the presence of the connection preface. This only affects the establishment of HTTP/2 connections over cleartext TCP; implementations that support HTTP/2 over TLS MUST use protocol negotiation in TLS [TLS-ALPN].
+> A client MUST send the connection preface (Section 3.5) and then MAY immediately send HTTP/2 frames to such a server; servers can identify these connections by the presence of the connection preface. This only affects the establishment of HTTP/2 connections over cleartext TCP; implementations that support HTTP/2 over TLS MUST use protocol negotiation in TLS [TLS-ALPN].
 >
->客户端必须发送一个连接前言，紧接着可能要迅速发送HTTP/2的帧数据到服务端，服务端可以通过前言识别出连接。这只对HTTP/2 下TCP明文连接的建立有效，如果需要通过TLS协议进行HTTP/2连接，则必须通过TLS握手。
+> 客户端必须发送一个连接前言，紧接着可能要迅速发送HTTP/2的帧数据到服务端，服务端可以通过前言识别出连接。这只对HTTP/2 下TCP明文连接的建立有效，如果需要通过TLS协议进行HTTP/2连接，则必须通过TLS握手。
 
 可见这种情况下要使用HTTP/2协议。
 
@@ -321,6 +343,7 @@ static final ByteString CONNECTION_PREFACE
 返回的数据还是回调在这个线程中处理。
 
 ### 1.4 创建HttpCodec对象
+
 通过返回的协议版本可以创建对应的Http协议对象了：
 
 ```java

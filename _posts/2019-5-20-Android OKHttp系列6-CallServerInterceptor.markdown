@@ -6,7 +6,9 @@ categories: Android
 ---
 
 > 文章将会被同步至微信公众号：Android部落格
+
 ## 1、概述
+
 > 开始写入request body数据，并读取服务端返回的数据
 
 
@@ -124,6 +126,7 @@ bufferedRequestBody.close();
 ```
 #### 1.1.3 读返回数据
 - 读返回Headers
+
 正常逻辑下，如果客户端发送100-continue，服务端返回100，此时返回构造Buidler为空，此时就是公共流程（意思是不管有没有请求body）:
 
 ```java
