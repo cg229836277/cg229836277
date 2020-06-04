@@ -7,7 +7,9 @@ categories: Android
 
 
 > 文章篇幅较长，文末有总结和流程图。
+>
 > 个人主页：https://chengang.plus/
+>
 > 文章将会同步到个人微信公众号：Android部落格，文末有二维码
 
 ## 1、用法
