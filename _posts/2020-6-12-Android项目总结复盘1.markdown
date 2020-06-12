@@ -1112,7 +1112,7 @@ void reportEvent(UsageEvents.Event event) {
     notifyStatsChanged();
 }
 ```
-- 第一步先把数据方法哦Daily所属的文件中，也就是放到内存中。
+- 第一步先把数据放到Daily所属的文件中，也就是放到内存中。
 - 第二步，调用IntervalStats的update方法实施更新。看看这里一连串的操作：
 
 > IntervalStats
@@ -1243,9 +1243,10 @@ public void putUsageStats(int intervalType, IntervalStats stats) throws IOExcept
 ```
 > TimeSparseArray<AtomicFile>[] mSortedStatFiles，继承自LongSpareArray
 
--第一部分中，先获取mSortedStatFiles中对应时间的文件是否存在，不存在的话就按照对应的时间间隔类型新建一个，创建完成之后将时间作为key，文件对象作为value添加到TimeSparseArray集合中。这个类型是有序的，而且会先通过二分查找这个key，如果存在，就要覆写数据了。
+- 第一部分中，先获取mSortedStatFiles中对应时间的文件是否存在，不存在的话就按照对应的时间间隔类型新建一个，创建完成之后将时间作为key，文件对象作为value添加到TimeSparseArray集合中。这个类型是有序的，而且会先通过二分查找这个key，如果存在，就要覆写数据了。
 
-通过调用`UsageStatsXml.write`方法执行写xml操作：
+- 第二部分通过调用`UsageStatsXml.write`方法执行写xml操作：
+
 > UsageStatsXml
 
 ```java
@@ -1295,28 +1296,30 @@ private static void writeUsageStats(XmlSerializer xml, final IntervalStats stats
     xml.endTag(null, PACKAGE_TAG);
 }
 ```
-到这里我们发现包名，时长，使用次数，mLastEvent对应的是前台或后台事件，是int类型，前台为1，后台为2，一天的结束时间事件为3。
+到这里我们发现包名，时长，使用次数，mLastEvent都被写入磁盘了。
+
+> mLastEvent对应的是前台或后台事件，是int类型，前台为1，后台为2，一天的结束时间事件为3。
 
 ### 3.5 项目问题复盘
 - 结合源码分析问题
 
-基本上现在Android比较新的版本中，都将应用使用详情数据写到磁盘了，但是在Android 9.0以下的版本中没有将应用使用次数写到磁盘。另外还要面临延迟20分钟写磁盘的操作，如果每次都从磁盘取数据，在Android 9.0以下的版本中读取的的次数一定是不准确的。
+Android9.0以后将应用使用详情的大多数数据都写到磁盘了，但是Android 9.0以下的版本中没有将应用使用次数写到磁盘。另外还要面临延迟20分钟写磁盘的操作，如果每次都从磁盘取数据，在Android 9.0以下的版本中读取的的次数一定是不准确的。
 
 相关的版本差异如下：
 
 ```java
 //Android 7.1
 private static void writeUsageStats(XmlSerializer xml, final IntervalStats stats,
-            final UsageStats usageStats) throws IOException {
-        xml.startTag(null, PACKAGE_TAG);
-        // Write the time offset.
-        XmlUtils.writeLongAttribute(xml, LAST_TIME_ACTIVE_ATTR,
-                usageStats.mLastTimeUsed - stats.beginTime);
-        XmlUtils.writeStringAttribute(xml, PACKAGE_ATTR, usageStats.mPackageName);
-        XmlUtils.writeLongAttribute(xml, TOTAL_TIME_ACTIVE_ATTR, usageStats.mTotalTimeInForeground);
-        XmlUtils.writeIntAttribute(xml, LAST_EVENT_ATTR, usageStats.mLastEvent);
-        xml.endTag(null, PACKAGE_TAG);
-    }
+        final UsageStats usageStats) throws IOException {
+    xml.startTag(null, PACKAGE_TAG);
+    // Write the time offset.
+    XmlUtils.writeLongAttribute(xml, LAST_TIME_ACTIVE_ATTR,
+            usageStats.mLastTimeUsed - stats.beginTime);
+    XmlUtils.writeStringAttribute(xml, PACKAGE_ATTR, usageStats.mPackageName);
+    XmlUtils.writeLongAttribute(xml, TOTAL_TIME_ACTIVE_ATTR, usageStats.mTotalTimeInForeground);
+    XmlUtils.writeIntAttribute(xml, LAST_EVENT_ATTR, usageStats.mLastEvent);
+    xml.endTag(null, PACKAGE_TAG);
+}
 //Android 8.1
 private static void writeUsageStats(XmlSerializer xml, final IntervalStats stats,
         final UsageStats usageStats) throws IOException {
@@ -1371,14 +1374,13 @@ private static void writeUsageStats(XmlSerializer xml, final IntervalStats stats
     xml.endTag(null, PACKAGE_TAG);
 }
 ```
-到后面，写入的数据颗粒度越来越小，比如应用可见时长，前台服务到前台的时长等都被写入磁盘。这是因为后面Android在设置中也做了应用使用详情功能，如果这些数据不写入的话，数据会有出入。
+到后面，写入的数据颗粒度越来越小，比如应用可见时长，前台服务的时长等都被写入磁盘。这是因为后面Android在设置中也做了应用使用详情功能，如果这些数据不写入的话，数据会有出入。
 
 #### 3.4.1 问题解决方案
 
 项目早期，这个App属于系统级别的App，我们可以通过监听灭屏广播，在灭屏之后立即获取上一次灭屏到此次灭屏时间段内的应用使用数据，虽然这段时间间隔会大于20分钟，但是灭屏之后，最新的数据会先被写入内存，而之前的数据在大于20分钟会被写入磁盘导致一部分次数的数据丢失，但是出现的概率比较低，可以接受。
 
 到项目后期，App的系统级别属性被去掉，只能作为一个普通App开发了，这里一方面修改framework，将应用使用次数也持久化到磁盘；如果framework的这个patch没有集成的话，可以在另外一个系统级服务中实现之前早期项目App的那一套保存数据逻辑，将数据即时存到本地数据库，并对外提供数据接口，同时加强权限判断，避免被乱用。这样App就可以获取到最新的数据了。
-
 
 微信公众号：![微信公众号](https://ftp.bmp.ovh/imgs/2020/04/f472fa7e9c62a8c7.jpg)
 
