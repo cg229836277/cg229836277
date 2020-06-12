@@ -1,0 +1,1386 @@
+---
+layout: post
+title:  "Android项目总结复盘1"
+date:   2020-6-12 17:50:25 +0800
+categories: Android
+---
+
+
+> 个人主页：https://chengang.plus/
+>
+> 文章将会同步到个人微信公众号：Android部落格，文末有二维码
+
+## 1、商城项目
+### 1.1 RecyclerView首页加载商品item内存占用过高
+
+- 原因：首页包含了精选，banner，秒杀，热卖列表，但是每一个ViewType没有在RecyclerView中设置各自的类型，导致缓存的时候当做一整ViewHolder缓存，从而整体内存占用过高。尤其底部的热卖列表上拉加载的时候，显得尤为显著。
+
+#### 1.1.1 源码追溯
+
+> RecyclerView.Recycler
+
+```java
+void recycleViewHolderInternal(ViewHolder holder) {
+    boolean cached = false;
+    boolean recycled = false;
+    if (forceRecycle || holder.isRecyclable()) {
+        if (mViewCacheMax > 0
+                && !holder.hasAnyOfTheFlags(ViewHolder.FLAG_INVALID
+                | ViewHolder.FLAG_REMOVED
+                | ViewHolder.FLAG_UPDATE
+                | ViewHolder.FLAG_ADAPTER_POSITION_UNKNOWN)) {
+            // Retire oldest cached view
+            int cachedViewSize = mCachedViews.size();
+            if (cachedViewSize >= mViewCacheMax && cachedViewSize > 0) {
+                recycleCachedViewAt(0);
+                cachedViewSize--;
+            }
+
+            int targetCacheIndex = cachedViewSize;
+            if (ALLOW_THREAD_GAP_WORK
+                    && cachedViewSize > 0
+                    && !mPrefetchRegistry.lastPrefetchIncludedPosition(holder.mPosition)) {
+                // when adding the view, skip past most recently prefetched views
+                int cacheIndex = cachedViewSize - 1;
+                while (cacheIndex >= 0) {
+                    int cachedPos = mCachedViews.get(cacheIndex).mPosition;
+                    if (!mPrefetchRegistry.lastPrefetchIncludedPosition(cachedPos)) {
+                        break;
+                    }
+                    cacheIndex--;
+                }
+                targetCacheIndex = cacheIndex + 1;
+            }
+            mCachedViews.add(targetCacheIndex, holder);
+            cached = true;
+        }
+        if (!cached) {
+            addViewHolderToRecycledViewPool(holder, true);
+            recycled = true;
+        }
+    }
+}
+```
+
+> RecyclerView.RecycledViewPool
+
+```java
+public void putRecycledView(ViewHolder scrap) {
+    final int viewType = scrap.getItemViewType();
+    final ArrayList<ViewHolder> scrapHeap = getScrapDataForType(viewType).mScrapHeap;
+    if (mScrap.get(viewType).mMaxScrap <= scrapHeap.size()) {
+        return;
+    }
+    scrap.resetInternal();
+    scrapHeap.add(scrap);
+}
+SparseArray<ScrapData> mScrap = new SparseArray<>();
+
+static class ScrapData {
+    final ArrayList<ViewHolder> mScrapHeap = new ArrayList<>();
+    int mMaxScrap = DEFAULT_MAX_SCRAP;
+    long mCreateRunningAverageNs = 0;
+    long mBindRunningAverageNs = 0;
+}
+
+public ViewHolder getRecycledView(int viewType) {
+    final ScrapData scrapData = mScrap.get(viewType);
+    if (scrapData != null && !scrapData.mScrapHeap.isEmpty()) {
+        final ArrayList<ViewHolder> scrapHeap = scrapData.mScrapHeap;
+        for (int i = scrapHeap.size() - 1; i >= 0; i--) {
+            if (!scrapHeap.get(i).isAttachedToTransitionOverlay()) {
+                return scrapHeap.remove(i);
+            }
+        }
+    }
+    return null;
+}
+```
+
+缓存分两个区域：
+- mCachedViews是一个List<ViewHolder>类型；
+- SparseArray<ScrapData>中的ScrapData包含了ArrayList<ViewHolder>，分ViewType存放ViewHolder，相同ViewType的ViewHolder放在一个List中，当取一个缓存出来的同时remove。
+
+到这里可以明白，当首页整个作为一个Viewtype类型的时候，会缓存一个很大的ViewHolder对象到mCachedViews或RecycledViewPool中。
+
+#### 1.1.2 解决办法
+- 首页的多个视图类型拆分为不同的ViewType，分不同的视图类型加载。
+- 根据视图中商品icon图片大小，与服务端协商减小商品列表中icon图片的分辨率；同时本地存放的图片必须放置在合理的drawable文件夹中，因为文件夹对应的设备像素密度与机器屏幕像素密度越接近，内存占用会越小。
+
+下边解释原因。
+
+##### 1.1.2.1 Bitmap内存计算
+本地加载图片时的各种decode方法最终到了BitmapFactory.cpp的doDecode()方法中，如下：
+
+> BitmapFactory.cpp
+
+```c++
+static jobject doDecode(JNIEnv* env, std::unique_ptr<SkStreamRewindable> stream, jobject padding, jobject options) {
+    if (env->GetBooleanField(options, gOptions_scaledFieldID)) {
+       const int density = env->GetIntField(options, gOptions_densityFieldID);
+       const int targetDensity = env->GetIntField(options, gOptions_targetDensityFieldID);
+       const int screenDensity = env->GetIntField(options, gOptions_screenDensityFieldID);
+       if (density != 0 && targetDensity != 0 && density != screenDensity) {
+          scale = (float) targetDensity / density;
+       }
+    }
+
+    // Determine the output size.
+    SkISize size = codec->getSampledDimensions(sampleSize);
+    
+    int scaledWidth = size.width();
+    int scaledHeight = size.height();
+    bool willScale = false;
+    // Apply a fine scaling step if necessary.
+    if (needsFineScale(codec->getInfo().dimensions(), size, sampleSize)) {
+            willScale = true;
+      scaledWidth = codec->getInfo().width() / sampleSize;
+            scaledHeight = codec->getInfo().height() / sampleSize;
+    }
+    
+    // Scale is necessary due to density differences.
+    if (scale != 1.0f) {
+       willScale = true;
+       scaledWidth = static_cast<int>(scaledWidth * scale + 0.5f);
+       scaledHeight = static_cast<int>(scaledHeight * scale + 0.5f);
+    }
+    
+    const float sx = scaledWidth / float(decodingBitmap.width());
+    const float sy = scaledHeight / float(decodingBitmap.height());
+    
+    SkCanvas canvas(outputBitmap);
+    canvas.scale(sx, sy);
+    canvas.drawBitmap(decodingBitmap, 0.0f, 0.0f, &paint);
+```
+
+从源码可以看出scaledWidth经过两次计算，一次是如果sampleSize不等于1的时候计算缩放宽高，等于原宽高分别除以采样倍数；另外一次是如果目标屏幕密度和当前图片所处文件夹的密度不一致的话，计算出:
+
+```scale = targetDensity / density```
+> (比如机器当前是xxhdpi，对应480，而图片放置在xhdpi中，对应320，就会算出一个大于1的拉伸系数)
+
+如果scale不等于1，用第一次计算的
+
+```scaledWidth * scale + 0.5，scaledHeight * scale + 0.5```
+
+> 可以看到分两步，一步是用最初的图片大小除以采样系数；一步是根据屏幕密度计算出来的拉伸系数然后乘以这个系数
+
+不过具体在做缩放操作的时候缩放因子等于两次计算之后的宽高分别处以原始宽高。可见对于设置采样率可以节省部分内存。
+
+最后实际的占用大小：
+
+`width = (originWidth / sampleSize) * (targetDensity / density) + 0.5`
+
+`height = (originHeight / sampleSize) * (targetDensity / density) + 0.5`
+
+`totalSize = width * height * 像素位`
+>（targetDensity是手机实际密度，等于宽平方 + 高平方开根号，处于屏幕对角线长度，density是图片在App所处文件的密度。）
+
+- ARGB_8888: 每个像素4字节. 共32位，默认设置。
+- Alpha_8: 只保存透明度，共8位，1字节。
+- ARGB_4444: 共16位，2字节。
+- RGB_565:共16位，2字节，只存储RGB值。
+
+getRowBytes()返回的是每行的像素值，乘以高度就是总的像素数，也就是占用内存的大小。
+
+getAllocationByteCount()与getByteCount()的返回值一般情况下都是相等的。只是在图片 复用的时候，getAllocationByteCount()返回的是复用图像所占内存的大小，getByteCount()返回的是新解码图片占用内存的大小。
+
+##### 1.1.2.2 Bitmap内存模型
+
+- Android 3.0 (API level 11)
+
+从这个版本开始，bitmap的ARGB数据(像素数据)和bitmap对象一起存在Dalvik的堆里了。这样bitmap对象和它的ARGB数据就可以同步回收了。
+
+后续Android又引入了BitmapFactory.Options.inBitmap字段。
+
+如果设置了这个字段，bitmap在加载数据时可以复用这个字段所指向的bitmap的内存空间。新增的这种内存复用的特性，可以优化掉因旧bitmap内存释放和新bitmap内存申请所带来的性能损耗。
+
+但是，内存能够复用也是有条件的。比如，在Android 4.4（API level 19）之前，只有新旧两个bitmap的尺寸一样才能复用内存空间。Android 4.4开始只要旧bitmap的尺寸大于等于新的bitmap就可以复用了。
+
+这样GC无法知道当前的内存情况是否乐观，大量创建bitmap可能不会触发到GC，而Native中bitmap的像素数据可能已经占用了过多内存，这时候就会OOM，所以推荐在bitmap使用完之后，调用recycle释放掉Native的内存。
+
+- Android 8.0之前
+
+Bitmap的内存分配在dalvik heap，Bitmap中有个byte[] mBuffer，其实就是用来存储像素数据的，它位于java heap中，通过在native层构建Java Bitmap对象的方式，将生成的byte[]传递给Bitmap.java对象。
+
+像素数据就和bitmap对象一起都分配在堆中了，一起接受GC管理，只要bitmap置为null没有被强引用持有，GC就会把它回收掉，和普通对象一样。
+
+- Android 8.0之后
+
+Bitmap像素内存的分配是在native层直接调用calloc，所以其像素分配的是在native heap上，并且还引入了NativeAllocationRegistry机制。
+
+Bitmap引入了NativeAllocationRegistry这样一种辅助自动回收native内存的机制，依然不需要用户主动回收了，当bitmap的Java对象被回收后，NativeAllocationRegistry辅助回收这个对象所申请的native内存。
+
+- 在RecyclerView Adapter的onViewRecycled方法中，释放图片：
+
+```java
+@Override
+public void onViewRecycled(@NonNull RecyclerView.ViewHolder holder) {
+    try {
+        if (!((Activity) context).isDestroyed() && !((Activity) context).isFinishing()) {
+            ImageView img = holder.itemView.findViewById(R.id.goods_img);
+            img.setImageDrawable(null);
+            Glide.with(context).clear(img);
+        }
+    } catch (Exception e) {
+        MyLog.d(TAG, "recycle fail:" + e.getLocalizedMessage());
+    }
+}
+```
+
+### 1.2 引导页到首页中间过渡时间长
+
+> https://developer.android.com/topic/performance/vitals/launch-time?hl=zh-cn
+>
+> https://zhuanlan.zhihu.com/p/91226153
+>
+> https://juejin.im/entry/5b8134cdf265da434a1fce4b
+
+#### 1.2.1 Application到Activity加载流程
+
+![Activity启动流程](https://ftp.bmp.ovh/imgs/2020/06/11b12ff86950d18c.png)
+
+总结上图的流程就是：
+
+Application的构造器方法——>attachBaseContext()——>onCreate()——>Activity的构造方法——>onCreate()——>配置主题中背景等属性——>onStart()——>onResume()——>测量布局绘制显示在界面上。
+
+#### 1.2.2 启动分析
+
+- 冷启动。冷启动是指应用从头开始启动：系统进程在冷启动后才创建应用进程。发生冷启动的情况包括应用自设备启动后或系统终止应用后首次启动。这种启动给最大限度地减少启动时间带来了最大的挑战，因为系统和应用要做的工作比在其他启动状态下更多。
+
+![](https://ftp.bmp.ovh/imgs/2020/06/8315d33137bedc93.png)
+
+- 热启动。应用的热启动比冷启动简单得多，开销也更低。在热启动中，系统的所有工作就是将您的 Activity 带到前台。如果应用的所有 Activity 都还驻留在内存中，则应用可以无须重复对象初始化、布局扩充和呈现。
+
+- 温启动。温启动涵盖在冷启动期间发生的操作的一些子集；同时，它的开销比热启动多。有许多潜在状态可视为温启动。例如：
+
+用户退出您的应用，但之后又重新启动。进程可能已继续运行，但应用必须通过调用 onCreate() 从头开始重新创建 Activity。
+系统将您的应用从内存中逐出，然后用户又重新启动它。进程和 Activity 需要重启，但传递到 onCreate() 的已保存实例状态包对于完成此任务有一定助益。
+
+#### 1.2.3 测量启动时间
+
+```adb shell am start -W [packageName]/[packageName.MainActivity]```
+
+输出如下：
+```
+E:\data_parse>adb shell am start -S -W com.xx.xx.xx/.activity.MainActivity
+Stopping: com.xx.xx.xx
+Starting: Intent { act=android.intent.action.MAIN cat=[android.intent.category.LAUNCHER] cmp=com.xx.xx.xx/.activity.MainActivity }
+Status: ok
+Activity: com.xx.xx.xx/.activity.MainActivity
+ThisTime: 1136
+TotalTime: 75246
+WaitTime: 1179
+Complete
+```
+
+- ThisTime : 最后一个 Activity 的启动耗时(例如从 LaunchActivity --> MainActivity「adb命令输入的Activity」 , 只统计 MainActivity 的启动耗时)
+- TotalTime : 启动一连串的 Activity 总耗时.(有几个Activity 就统计几个)
+- WaitTime : 应用进程的创建过程 + TotalTime .
+
+![](https://ftp.bmp.ovh/imgs/2020/06/51c1b2444b1b1eb3.png)
+
+> 图片来源[https://juejin.im/entry/5b8134cdf265da434a1fce4b](https://juejin.im/entry/5b8134cdf265da434a1fce4b)
+
+- 在第①个时间段内，AMS 创建 ActivityRecord 记录块和选择合理的 Task、将当前Resume 的 Activity 进行 pause.
+- 在第②个时间段内，启动进程、调用无界面 Activity 的 onCreate() 等、 pause/finish 无界面的 Activity.
+- 在第③个时间段内，调用有界面 Activity 的 onCreate、onResume.
+
+#### 1.2.4 解决问题
+从两方面入手，想办法缩短Application消耗的时间；缩短Activity消耗的时间。
+
+##### 1.2.4.1 请求数据统一整合
+我们的项目中有各种SDK的初始化，包括友盟，百川，开普勒，Glide，分享等。
+
+- 第一步，将之前各个负责人的数据请求框架集合到一个类中，综合统一调度。统一Json解析方法，所有的json解析挪入IO线程处理，序列化成类之后统一返回。
+
+> json解析的过程存在json字符遍历，而商城类项目从服务端返回的数据上百k，有些json结构非常复杂，比较耗时
+
+- 第二步，首页数据分多个接口提供，每一个接口一个负责人，导致每一个负责人在首页启动的时候都去请求数据，没有做到统一调度，而且部分页面的数据在IO线程请求完毕之后，调度到UI线程做解析，明显拖慢了加载速度
+- 第三步，对首页统一返回的数据做拆分，对优先级比较低的数据，单独做一个接口，待首页加载完成之后或页面展示时再展现
+- 第四步，将在Application中预先加载首页数据挪到闪屏页加载，充分利用闪屏页延迟等待的2000ms的时间
+- 第五步，将不必要的SDK初始化挪到首页展示完成之后初始化或使用前初始化
+
+##### 1.2.4.2 视图xml优化
+- 将闪屏页的图片从xml的ImageView android:src中移除，加快xml inflate速度，并在Activity的onCreate方法中通过图片工具类加载，这样有一定概率通缓存中加载，避免每次都需要解码。而解码又需要消耗一些内存，还可能导致OOM。
+- 检查闪屏页和首页的xml视图层级，将过渡绘制的页面提出来重点优化，对不必要的层级删除，对不必要的背景设置为null或透明。
+- 对于自定义的View，重点检查onDraw方法，避免对象的创建
+
+##### 1.2.4.3 其他一些优化
+- SharedPreference不能写入大量数据作为value，只能写入一些flag等标识性变量，因为SharedPreference在初始化的时候会从Disk加载数据，这里是阻塞式的。而如果之前存有大量的数据在里面会导致阻塞主线程。在获取Editor往里面提交数据的时候，又会去等待SharedPreference初始化完成。所以这里一方面导致SharedPreference初始化慢，IO操作会阻塞主线程；另一方面又有可能因为等待引起ANR。
+
+> SharedPreferencesImpl
+
+```java
+private final Object mLock = new Object();
+
+private void startLoadFromDisk() {
+    synchronized (mLock) {
+        mLoaded = false;
+    }
+    new Thread("SharedPreferencesImpl-load") {
+        public void run() {
+            loadFromDisk();
+        }
+    }.start();
+}
+
+    @Override
+public Editor edit() {
+    synchronized (mLock) {
+        awaitLoadedLocked();
+    }
+
+    return new EditorImpl();
+}
+
+public String getString(String key, @Nullable String defValue) {
+    synchronized (mLock) {
+        awaitLoadedLocked();
+        String v = (String)mMap.get(key);
+        return v != null ? v : defValue;
+    }
+}
+```
+在这里可以看到，加锁的对象是mLock，当loadFromDisk方法执行完毕之后，才会执行```mLock.notifyAll();```，至此，其他的代码才会获得执行时机。尤其是后续edit，以及put/get操作的时候。
+
+### 1.3 flutter版本Widget刷新时间长，刷新频繁
+
+> http://fluttersamples.com/
+
+当在StatefulWidget中调用setState的时候，会导致当前Widget下所有Widget树刷新，这种情况如果遇上复杂的布局，肯定是不可想象的，先看看调用setState的时候发生了什么，伪代码如下：
+
+```dart
+@protected
+void setState(VoidCallback fn) {
+    final dynamic result = fn() as dynamic;
+    _element.markNeedsBuild();
+    
+     scheduleFrame();
+     
+     void handleDrawFrame() {};
+     
+     void drawFrame() {};
+     
+     rebuild();
+     
+     preformRebuild();
+     
+     build();
+     
+     updateChild();
+     
+     update();
+}
+```
+
+可以看到最终会导致重新请求渲染帧，更新视图。
+
+解决方案是：
+- 将在顶级视图的setState方法下放到各个需要更新的子视图中，由子视图控制刷新
+- 将不必要的StatefulWidget改成StatelessWidget，避免不必要的刷新
+- 当子视图需要状态更新但是层级较多时，引入InheritedWidget。看看InheritedWidget的大致工作流程：
+
+```dart
+//第一步
+@override
+void _updateInheritance() {
+    final Map<Type, InheritedElement> incomingWidgets = _parent?._inheritedWidgets;
+    if (incomingWidgets != null)
+      _inheritedWidgets = HashMap<Type, InheritedElement>.from(incomingWidgets);
+    else
+      _inheritedWidgets = HashMap<Type, InheritedElement>();
+    _inheritedWidgets[widget.runtimeType] = this;
+}
+
+//第二步
+@override
+T dependOnInheritedWidgetOfExactType<T extends InheritedWidget>({Object aspect}) {
+    final InheritedElement ancestor = _inheritedWidgets == null ? null : _inheritedWidgets[T];
+    if (ancestor != null) {
+      return dependOnInheritedElement(ancestor, aspect: aspect) as T;
+    }
+    _hadUnsatisfiedDependencies = true;
+    return null;
+}
+
+@override
+InheritedWidget dependOnInheritedElement(InheritedElement ancestor, { Object aspect }) {
+    _dependencies ??= HashSet<InheritedElement>();
+    _dependencies.add(ancestor);
+    ancestor.updateDependencies(this, aspect);
+    return ancestor.widget;
+}
+
+@override
+void updateDependencies(Element dependent, Object aspect) {
+    setDependencies(dependent, null);
+}
+
+@protected
+void setDependencies(Element dependent, Object value) {
+    _dependents[dependent] = value;
+}
+
+//第三步
+@protected
+void updated(covariant ProxyWidget oldWidget) {
+    notifyClients(oldWidget);
+}
+
+@override
+void notifyClients(InheritedWidget oldWidget) {
+    for (final Element dependent in _dependents.keys) {
+      notifyDependent(oldWidget, dependent);
+    }
+}
+
+void notifyDependent(covariant InheritedWidget oldWidget, Element dependent) {
+    dependent.didChangeDependencies();
+}
+
+@mustCallSuper
+void didChangeDependencies() {
+    markNeedsBuild();
+}
+```
+
+- 第一步，Element初始化阶段。
+
+在这个阶段每一个Element在mount的过程中会调用_updateInheritance方法，生成一个HashMap _inheritedWidgets。这里比较取巧的是，当父类已经存在的时候，直接在父类的_inheritedWidgets里面追加，而runType就是他的key，所以可以轻松找到InheritedWidget。
+
+- 第二步，从InheritedWidget获取数据阶段。
+
+InheritedWidget的子Widget调用它对外暴露的of方法时，通过调用dependOnInheritedWidgetOfExactType方法返回InheritedWidget自身。这里从第一步的_inheritedWidgets中通过runType找到这个对象，然后调用它的setDependencies方法，将子Widget的Element作为依赖项加入到一个HashSet _dependents中。
+
+- 第三步，通知子Element更新。
+
+当InheritedWidget的数据发生变化时，会触发渲染树更新，当调用它的update方法更新Element的时候，会遍历上一步_dependents中保存的依赖Element，并重建这些Element。
+
+透过以上步骤，我们可以发现不论InheritedWidget与需要依赖它数据的Widget中间隔了多少层级，只要InheritedWidget数据发生变化，都能通知依赖它的Widget重绘。
+
+
+## 2、系统数据检查
+### 2.1 dex更新
+我们开发的java代码通过编译生成.class文件，然后通过dx工具生成机器可以识别的dex文件。
+
+Android中采用ClassLoader加载dex文件，加载完成之后可以通过反射调用其中的方法，适合那些不依赖文件等资源的业务，而打点恰好比较适合使用dex加载的方式。
+
+Android中有PathClassLoader和DexClassLoader ，他们都继承自ClassLoader。他们的继承关系如下：
+
+![](https://ftp.bmp.ovh/imgs/2020/06/dc4eb4a872e1fb9f.jpg)
+
+- DexClassLoader：可以加载jar/apk/dex，可以从SD卡中加载未安装的apk；
+- PathClassLoader：要传入系统中apk的存放Path，所以只能加载已经安装的apk文件。
+- BaseDexClassLoader是DexClassLoader和PathClassLoader的父类，针对传入不同的参数做差异化处理。
+
+看看三个类的源码：
+
+#### 2.1.1 PathClassLoader
+
+> dalvik/system/PathClassLoader.java
+
+```java
+public class PathClassLoader extends BaseDexClassLoader {
+    public PathClassLoader(String dexPath, ClassLoader parent) {
+        super(dexPath, null, null, parent);
+    }
+    
+    public PathClassLoader(String dexPath, String librarySearchPath, ClassLoader parent) {
+        super(dexPath, null, librarySearchPath, parent);
+    }
+}
+```
+
+#### 2.1.2 DexClassLoader
+
+> dalvik/system/DexClassLoader.java
+
+```java
+public class DexClassLoader extends BaseDexClassLoader {
+    public DexClassLoader(String dexPath, String optimizedDirectory, String librarySearchPath, ClassLoader parent) {
+        super(dexPath, null, librarySearchPath, parent);
+    }
+}
+```
+
+#### 2.1.3 BaseDexClassLoader
+
+```java
+public class BaseDexClassLoader extends ClassLoader {
+    private final DexPathList pathList;
+    public BaseDexClassLoader(String dexPath, File optimizedDirectory,
+            String librarySearchPath, ClassLoader parent) {
+        this(dexPath, optimizedDirectory, librarySearchPath, parent, false);
+    }
+    
+    public BaseDexClassLoader(String dexPath, File optimizedDirectory,
+            String librarySearchPath, ClassLoader parent, boolean isTrusted) {
+        super(parent);
+        this.pathList = new DexPathList(this, dexPath, librarySearchPath, null, isTrusted);
+
+        if (reporter != null) {
+            reportClassLoaderChain();
+        }
+    }
+    
+    public BaseDexClassLoader(ByteBuffer[] dexFiles, ClassLoader parent) {
+        // TODO We should support giving this a library search path maybe.
+        super(parent);
+        this.pathList = new DexPathList(this, dexFiles);
+    }
+```
+在BaseDexClassLoader中通过DexPathList类具体的处理Dex，他的构造函数如下：
+
+#### 2.1.4 DexPathList
+
+```java
+private Element[] dexElements;
+DexPathList(ClassLoader definingContext, String dexPath, String librarySearchPath, File optimizedDirectory, boolean isTrusted) {
+    this.dexElements = makeDexElements(splitDexPath(dexPath), optimizedDirectory, suppressedExceptions, definingContext, isTrusted);
+}
+            
+private static Element[] makeDexElements(List<File> files, File optimizedDirectory, List<IOException> suppressedExceptions, ClassLoader loader, boolean isTrusted) {
+    Element[] elements = new Element[files.size()];
+    int elementsPos = 0;
+    for (File file : files) {
+        if (file.isDirectory()) {
+            elements[elementsPos++] = new Element(file);
+        } else if (file.isFile()) {
+            String name = file.getName();
+            
+            DexFile dex = null;
+            dex = loadDexFile(file, optimizedDirectory, loader, elements);
+        }
+    }
+    retrun elements;
+}
+
+private static DexFile loadDexFile(File file, File optimizedDirectory, ClassLoader loader, Element[] elements) throws IOException {
+    if (optimizedDirectory == null) {
+        return new DexFile(file, loader, elements);
+    } else {
+        String optimizedPath = optimizedPathFor(file, optimizedDirectory);
+        return DexFile.loadDex(file.getPath(), optimizedPath, 0, loader, elements);
+    }
+}
+```
+最终通过DexFile加载loadDex方法在native层实现对dex的加载和处理。
+
+而分析`PathClassLoader`和`DexClassLoader`的构造函数可以看到Android 9.0中的DexClassLoader构造函数的optimizedDirectory参数默认是null。所以这里要针对版本的不同做差异化处理。
+
+我们一般加载Dex的方式是：
+
+```java
+classLoader = context.getClassLoader();
+classLoader.loadClass("you class path");
+```
+
+这里做一下差异化：
+
+```java
+public ClassLoader load(Context context,String dexName) {
+    mLoaded = false;
+    ClassLoader classLoader = null;
+    File dexOutputDir = context.getDir("dex", 0);
+    File dexFile = new File(dexOutputDir.getAbsolutePath(), dexName);
+    Log.d(TAG, "load start");
+    if (!dexFile.exists()) {
+        return null;
+    }
+    String dexPath = dexFile.getAbsolutePath();
+    Log.d(TAG, "dPath = " + dexPath);
+    int version = android.os.Build.VERSION.SDK_INT;
+    if (version >= 25) {
+        BaseDexClassLoader parent = (BaseDexClassLoader) context.getClassLoader();
+        Class<BaseDexClassLoader> c = BaseDexClassLoader.class;
+        Method method;
+        try {
+            method = c.getMethod("addDexPath", String.class);
+            method.invoke(parent, dexPath);
+            mLoaded = true;
+            classLoader = parent;
+            return classLoader;
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+    Log.d(TAG, "mLoaded1 = " + mLoaded);
+    if (!mLoaded) {
+        ArrayList<File> files = new ArrayList<File>();
+        files.add(dexFile);
+
+        classLoader = context.getClassLoader();
+        classLoader.loadClass("you class path");
+        try {
+            Field pathListField = findField(classLoader, "pathList");
+            Object dexPathList = pathListField.get(classLoader);
+            ArrayList<IOException> suppressedExceptions = new ArrayList<IOException>();
+            if (version < 19) {
+                expandFieldArray(dexPathList, "dexElements",
+                        makeDexElements(dexPathList, files, null));
+            } else if (version < 23) {
+                expandFieldArray(dexPathList, "dexElements",
+                        makeDexElements(dexPathList, files, null, suppressedExceptions));
+            } else {
+                expandFieldArray(dexPathList, "dexElements",
+                        makePathElements(dexPathList, files, null, suppressedExceptions));
+            }
+
+        } catch (Exception e1) {
+            e1.printStackTrace();
+        }
+    }
+    Log.d(TAG, "mLoaded2 = " + mLoaded);
+    if (mLoaded) {
+        return classLoader;
+    }
+    return null;
+}
+```
+- SDK_INI大于等于25
+
+当sdk_int大于等于25时，通过反射BaseDexClassLoader的addDexPath方法直接添加dex文件到DexPathList的Element[]数组中，而后续findClass方法的逻辑就是遍历这个数据找到对应的dex文件。
+
+- SDK_INI小于25
+
+这种情况下，先反射获取ClassLoader的pathList对象，这里的ClassLoader实际是PathClassLoader，但是最终都会到BaseDexClassLoader的pathList。
+
+获取到这个变量之后，先调用`makeDexElements`方法将生成的dex对象放到一个数组中，接着在`expandFieldArray`方法中将就的dex数组和新的dex数组合并：
+
+```java
+private Object[] makeDexElements(Object dexPathList, ArrayList<File> files, File optimizedDirectory) throws IllegalAccessException, InvocationTargetException, NoSuchMethodException {
+    Method makeDexElements = findMethod(dexPathList, "makeDexElements", ArrayList.class, File.class);
+
+    return (Object[]) makeDexElements.invoke(dexPathList, files, optimizedDirectory);
+}
+```
+这里的`makeDexElements`方法对应的是`DexPathList`的`makeDexElements`方法，最终目的是将dex对象添加到`Element[]`数组中，作为新的数组返回。
+
+`expandFieldArray`对应的是`DexPathList`的`addDexPath`方法，将新旧`Element[]`数组合到一个数组中，旧的数组在前面。这样就导致了相同文件名的dex文件，最新修复了bug的dex不能立即生效。
+
+
+```java
+private void expandFieldArray(Object instance, String fieldName, Object[] extraElements) throws NoSuchFieldException, IllegalArgumentException, IllegalAccessException {
+    Field jlrField = findField(instance, fieldName);
+    Object[] original = (Object[]) jlrField.get(instance);
+    Object[] combined = (Object[]) Array.newInstance(original.getClass()
+            .getComponentType(), original.length + extraElements.length);
+    System.arraycopy(original, 0, combined, 0, original.length);
+    System.arraycopy(extraElements, 0, combined, original.length,
+            extraElements.length);
+    jlrField.set(instance, combined);
+    mLoaded = true;
+    Log.d(TAG, "expandFieldArray");
+}
+```
+对比看下`DexPathList`中的`addDexPath`方法：
+
+```java
+public void addDexPath(String dexPath, File optimizedDirectory, boolean isTrusted) {
+    final List<IOException> suppressedExceptionList = new ArrayList<IOException>();
+    final Element[] newElements = makeDexElements(splitDexPath(dexPath), optimizedDirectory,
+            suppressedExceptionList, definingContext, isTrusted);
+    
+    if (newElements != null && newElements.length > 0) {
+        final Element[] oldElements = dexElements;
+        dexElements = new Element[oldElements.length + newElements.length];
+        System.arraycopy(
+                oldElements, 0, dexElements, 0, oldElements.length);
+        System.arraycopy(
+                newElements, 0, dexElements, oldElements.length, newElements.length);
+    }
+}
+```
+可见我们自己的操作对应着`DexPathList`的`addDexPath`方法。
+
+在我们自己的`expandFieldArray`方法最后通过执行`jlrField.set(instance, combined);`，将合并后的`Element[]`数组赋值给`DexPathList`的`Element[] dexElements`。
+
+当上述操作完成之后，就要调用loadClass方法加载dex文件中的类了，这个方法在ClassLoader类中定义：
+```java
+protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException
+{
+    Class<?> c = findLoadedClass(name);
+    if (parent != null) {
+        c = parent.loadClass(name, false);
+    } else {
+        c = findBootstrapClassOrNull(name);
+    }
+    if (c == null) {
+        c = findClass(name);
+    }
+    return c;            
+}
+```
+`parent`由`Context.getClassLoader`所属的PathClassLoader传递，一直从`BaseDexClassLoader`到`ClassLoader`。
+
+到这里要熟悉应用被创建初始化的流程了，这里先不引申过去，只需要知道这个parent是`BootClassLoader`类型。
+
+```java
+@Override
+protected Class<?> loadClass(String className, boolean resolve)
+       throws ClassNotFoundException {
+    Class<?> clazz = findLoadedClass(className);
+
+    if (clazz == null) {
+        clazz = findClass(className);
+    }
+
+    return clazz;
+}
+```
+如果还找不到，就调用`BaseDexClassLoader`的`findClass`方法了。
+
+```java
+@Override
+protected Class<?> findClass(String name) throws ClassNotFoundException {
+    List<Throwable> suppressedExceptions = new ArrayList<Throwable>();
+    Class c = pathList.findClass(name, suppressedExceptions);
+    return c;
+}
+```
+到这里如果还找不到就抛异常出来了，`ClassNotFoundException`。
+
+上边的流程就是各大博客上面说的双亲委派机制，父类先从已经加载的类里面找，找不到的话，再从自己`BaseDexClassLoader`的`findClass`方法里面去找。
+
+#### 2.1.5 问题复盘
+到这里，基本就将Dex加载的流程搞清楚了，但是这样的加载会导致新加载的Dex不能立即生效，必须重新启动应用之后才能生效。针对这种问题，可以将Dex热更新模块放到一个单独的进程中，当Dex加载完毕之后，调用killProcess方法自杀，然后由另一个进程拉活重启。
+
+## 3、健康数据记录项目
+这个项目遇到的主要问题是应用使用时长和使用次数不准确的问题。原因要从应用的业务逻辑以及源码中去查找。
+
+一般我们获取应用使用数据详情的方法是：
+
+```java
+@TargetApi(Build.VERSION_CODES.LOLLIPOP)
+private ArrayList<AppLaunchInfoBean> getAppLaunchInfoBean(long start, long end) {
+    final UsageStatsManager usageStatsManager = (UsageStatsManager) mContext.getSystemService("usagestats");
+    UsageEvents usageEvents = usageStatsManager.queryEvents(start, end);
+    return getAppLaunchInfoBeanList(usageEvents, end);
+}
+```
+### 3.1 业务逻辑
+当每次打开应用的时候,通过上述方法去取使用数据，或者每次从应用其他页面回到首页的时候去取，将取到的数据持久化保存到本地数据库。
+
+这种使用方式看起来很合理，但是测试人员总是反馈应用使用时长和次数不准确。到这里就需要从源码找原因了。
+
+### 3.2 UsageStatsManager源码追溯
+我们都知道linux从init.rc脚本启动了Zygote，Zygote 通过fork创建了system_server进程，这个集成所属的类是`SystemServer`，在他的run方法中启动了一些列的系统服务，我们重点关注`UsageStatsService`何时启动。
+
+> SystemServer
+
+```java
+private void run() {
+    mSystemServiceManager = new SystemServiceManager(mSystemContext);
+    LocalServices.addService(SystemServiceManager.class, mSystemServiceManager);
+    startCoreServices();
+}
+
+private void startCoreServices() {
+    mSystemServiceManager.startService(UsageStatsService.class);
+    mActivityManagerService.setUsageStatsManager(LocalServices.getService(UsageStatsManagerInternal.class));
+}
+```
+SystemServiceManager统一管理系统服务，交给它去启动服务，并且将启动之后的服务交给ActivityManagerService调度。
+
+> SystemServiceManager
+
+```java
+public <T extends SystemService> T startService(Class<T> serviceClass) {
+    final String name = serviceClass.getName();
+    final T service;
+    Constructor<T> constructor = serviceClass.getConstructor(Context.class);
+    service = constructor.newInstance(mContext);
+    startService(service);
+    return service;
+}
+
+public void startService(@NonNull final SystemService service) {
+    // Register it.
+    mServices.add(service);
+    // Start it.
+    long time = SystemClock.elapsedRealtime();
+    try {
+        service.onStart();
+    } catch (RuntimeException ex) {
+    }
+    warnIfTooLong(SystemClock.elapsedRealtime() - time, service, "onStart");//50ms
+}
+```
+这里可以看到通过反射的方式调用了`UsageStatsService`的构造函数，构造完成之后通过`startService`方法启动这个服务：
+> UsageStatsService
+
+```java
+public class UsageStatsService extends SystemService implements UserUsageStatsService.StatsUpdatedListener {
+    public UsageStatsService(Context context) {
+        super(context);
+    }
+}
+
+//start方法比较长，只提取比较重要的方法
+@Override
+public void onStart() {
+    //第一部分
+    mUserManager = (UserManager) getContext().getSystemService(Context.USER_SERVICE);
+    
+    //第二部分
+    mHandler = new H(BackgroundThread.get().getLooper());
+    
+    //第三部分
+    File systemDataDir = new File(Environment.getDataDirectory(), "system");
+    mUsageStatsDir = new File(systemDataDir, "usagestats");
+    mUsageStatsDir.mkdirs();
+    
+    //第四部分
+    publishLocalService(UsageStatsManagerInternal.class, new LocalService());
+    publishBinderService(Context.USAGE_STATS_SERVICE, new BinderService());
+    
+    //第五部分
+    getUserDataAndInitializeIfNeededLocked(UserHandle.USER_SYSTEM, mSystemTimeSnapshot);
+}
+
+private UserUsageStatsService getUserDataAndInitializeIfNeededLocked(int userId, long currentTimeMillis) {
+    UserUsageStatsService service = mUserState.get(userId);
+    if (service == null) {
+        service = new UserUsageStatsService(getContext(), userId, new File(mUsageStatsDir, Integer.toString(userId)), this);
+        service.init(currentTimeMillis);
+        mUserState.put(userId, service);
+    }
+    return service;
+}
+```
+UsageStatsService的构造函数比较简单，重点分析start方法：
+
+- 第一部分中获取了`UserManager`，这个是为多用户的情况下处理数据准备的
+- 第二部分中创建了一个Handler，用于处理数据，比如存储数据到磁盘，他的looper其实来自于HandlerThread，因为BackgroundThread继承自HandlerThread。
+- 第三部分是在/data/system/目录下创建一个usagestats的文件夹，用于创建文件存放数据。
+- 第四部分中，其实是将LocalService对象添加到LocalServices的集合中，而LocalService是UsageStatsService的内部类；`publishBinderService`做的事情就是将`BinderService`添加到`ServiceManager`中。`BinderService`的定义是：
+
+```java
+private final class BinderService extends IUsageStatsManager.Stub {}
+```
+我们知道`IUsageStatsManager.Stub`是对客户端提供的代理对象，客户端获取到对象进行对应的操作，而具体的操作函数就定义在`BinderService`覆写的方法中。
+- 第五部分意在初始化一个`UserUsageStatsService`类，在初始化的时候回传递userId，根据这个userId创建对应的文件夹存储不同用户的数据：
+
+> UserUsageStatsService
+
+```java
+UserUsageStatsService(Context context, int userId, File usageStatsDir, StatsUpdatedListener listener) {
+    mDatabase = new UsageStatsDatabase(usageStatsDir);
+    mCurrentStats = new IntervalStats[UsageStatsManager.INTERVAL_COUNT];
+}
+```
+`UserUsageStatsService`构造函数中又创建了一个`UsageStatsDatabase`对象，以及`IntervalStats`类型的数组。
+
+前者主要功能是往xml文件中写数据，后者的主要功能是处理不同时间间隔的数据。
+
+> UsageStatsDatabase
+
+```java
+public UsageStatsDatabase(File dir) {
+    mIntervalDirs = new File[] {
+            new File(dir, "daily"),
+            new File(dir, "weekly"),
+            new File(dir, "monthly"),
+            new File(dir, "yearly"),
+    };
+    mVersionFile = new File(dir, "version");
+    mSortedStatFiles = new TimeSparseArray[mIntervalDirs.length];
+}
+```
+这里又分不同的时间属性创建文件夹存放数据。
+
+`UserUsageStatsService`最后会调用init方法，这个方法的目的是读取已有的数据，没有相关的数据就初始化创建。
+
+到这里基本的初始化工作就完成了。
+
+### 3.3 客户端获取数据源码追踪
+客户端的调用代码是：
+
+```java
+usageStatsManager.queryEvents(start, end);
+```
+追踪一下这个代码的调用栈：
+> UsageStatsManager
+
+```java
+public UsageEvents queryEvents(long beginTime, long endTime) {
+    try {
+        UsageEvents iter = mService.queryEvents(beginTime, endTime, mContext.getOpPackageName());
+        if (iter != null) {
+            return iter;
+        }
+    } catch (RemoteException e) {
+    }
+    return sEmptyResults;
+}
+```
+这里的`mService`是`IUsageStatsManager`类型，是服务端的操作对象，对应的是服务端`UsageStatsService`的内部类`BinderService`，也就是对应的调用其中的方法：
+> UsageStatsService.BinderService
+
+```java
+@Override
+public UsageEvents queryEvents(long beginTime, long endTime, String callingPackage) {
+    if (!hasPermission(callingPackage)) {
+        return null;
+    }
+    try {
+        return UsageStatsService.this.queryEvents(userId, beginTime, endTime,
+        obfuscateInstantApps);
+    } finally {
+        Binder.restoreCallingIdentity(token);
+    }
+}
+
+UsageEvents queryEvents(int userId, long beginTime, long endTime, boolean shouldObfuscateInstantApps) {
+    final UserUsageStatsService service = getUserDataAndInitializeIfNeededLocked(userId, timeNow);
+    return service.queryEvents(beginTime, endTime, shouldObfuscateInstantApps);
+}
+```
+在`queryEvents`方法中调用了外部类的`queryEvents`方法，而在这个方法中最终是调用到了UserUsageStatsService的`queryEvents`方法：
+> UserUsageStatsService
+
+```java
+UsageEvents queryEvents(final long beginTime, final long endTime, boolean obfuscateInstantApps) {
+    final ArraySet<String> names = new ArraySet<>();
+    List<UsageEvents.Event> results = queryStats(UsageStatsManager.INTERVAL_DAILY,
+    beginTime, endTime, new StatCombiner<UsageEvents.Event>() {
+        @Override
+        public void combine(IntervalStats stats, boolean mutable, List<UsageEvents.Event> accumulatedResult) {
+            final int startIndex = stats.events.firstIndexOnOrAfter(beginTime);
+            final int size = stats.events.size();
+            for (int i = startIndex; i < size; i++) {
+                UsageEvents.Event event = stats.events.get(i);
+                names.add(event.mPackage);
+                if (event.mClass != null) {
+                    names.add(event.mClass);
+                }
+                accumulatedResult.add(event);
+            }
+        }
+    });
+    String[] table = names.toArray(new String[names.size()]);
+    Arrays.sort(table);
+    return new UsageEvents(results, table);
+}
+```
+这里调用的时候如果不设置时间间隔，默认是`INTERVAL_DAILY`，看看具体的`queryStats`方法：
+
+```java
+private <T> List<T> queryStats(int intervalType, final long beginTime, final long endTime, StatCombiner<T> combiner) {
+    //第一部分
+    final IntervalStats currentStats = mCurrentStats[intervalType];
+    //第二部分
+    List<T> results = mDatabase.queryUsageStats(intervalType, beginTime, truncatedEndTime, combiner);
+    //第三部分
+    if (beginTime < currentStats.endTime && endTime > currentStats.beginTime) {
+        combiner.combine(currentStats, true, results);
+    }
+    return results;
+}
+```
+- 第一部分从当前内存中里面取，因为INTERVAL_DAILY的数据被report的时候，一开始是放到mCurrentStats里面存起来。
+> mCurrentStats是IntervalStats数组类型，而IntervalStats里面维护了一个EventList对象，这个对象里面持有一个ArrayList<UsageEvents.Event> mEvents，维护应用使用详情数据。
+
+- 第二部分从本地磁盘的xml文件取需要的时间间隔内的数据。在取到数据之后回调combine方法将数据存放到一个List中：
+
+> UsageStatsDatabase
+
+```java
+public <T> List<T> queryUsageStats(int intervalType, long beginTime, long endTime, StatCombiner<T> combiner) {
+    final TimeSparseArray<AtomicFile> intervalStats = mSortedStatFiles[intervalType];
+    int startIndex = intervalStats.closestIndexOnOrBefore(beginTime);
+    int endIndex = intervalStats.closestIndexOnOrBefore(endTime);
+    final IntervalStats stats = new IntervalStats();
+    final ArrayList<T> results = new ArrayList<>();
+    for (int i = startIndex; i <= endIndex; i++) {
+        final AtomicFile f = intervalStats.valueAt(i);
+        UsageStatsXml.read(f, stats);
+        if (beginTime < stats.endTime) {
+            combiner.combine(stats, false, results);
+        }
+    }
+    return results;
+}
+```
+- 第三部分是将内存和磁盘的数据合并起来。
+
+到这里我们就知道，取数据的时候是内存和磁盘数据的合集，那么究竟该怎么取数据才能比较准确呢？看看系统怎么存储数据的。
+
+### 3.4 系统存数据源码追踪
+记得`UsageStatsService`在系统初始化的时候，会将他的一个对象设置到AMS，这里就是数据存储被触发的地方：
+
+> ActivityManagerService
+
+```java
+void updateUsageStats(ActivityRecord component, boolean resumed) {
+    if (resumed) {
+        if (mUsageStatsService != null) {
+            mUsageStatsService.reportEvent(component.realActivity, component.userId, UsageEvents.Event.MOVE_TO_FOREGROUND);
+        }
+    } else {
+        if (mUsageStatsService != null) {
+            mUsageStatsService.reportEvent(component.realActivity, component.userId, UsageEvents.Event.MOVE_TO_BACKGROUND);
+        }
+    }
+}
+```
+`updateUsageStats`方法在三个地方被调用：
+
+- ActivityStackSupervisor,reportResumedActivityLocked
+- ActivityStack,startPausingLocked
+- ActivityStack,removeHistoryRecordsForAppLocked
+
+从这三个方法名称可以看出来一般都是Activity从前台切换到后台，或从后台到前台时会触发这个方法。
+
+从updateUsageStats方法中可以看出，分为`MOVE_TO_FOREGROUND`,`MOVE_TO_BACKGROUND`调用reportEvent方法。
+
+这里的`mUsageStatsService`是`UsageStatsManagerInternal`类型，记得在UsageStatsService的start方法中有`publishLocalService(UsageStatsManagerInternal.class, new LocalService());`方法，这里`UsageStatsManagerInternal`是type，`LocalService`是type对应的service，而`LocalService`继承自`UsageStatsManagerInternal`，因此这里具体操作在`UsageStatsService`的内部类`LocalService`中。
+
+> UsageStatsService.LocalService
+
+```java
+private final class BinderService extends IUsageStatsManager.Stub {
+    @Override
+    public void reportEvent(ComponentName component, int userId, int eventType) {
+        UsageEvents.Event event = new UsageEvents.Event();
+        event.mPackage = component.getPackageName();
+        event.mClass = component.getClassName();
+
+        // This will later be converted to system time.
+        event.mTimeStamp = SystemClock.elapsedRealtime();
+
+        event.mEventType = eventType;
+        mHandler.obtainMessage(MSG_REPORT_EVENT, userId, 0, event).sendToTarget();
+    }
+}
+```
+这里新建一个UsageEvents.Event对象，将包名，组件名，时间，类型填充起来，通过UsageStatsService onStart方法中初始化的mHandler中串行的处理消息：
+> UsageStatsService
+
+```java
+class H extends Handler {
+    public H(Looper looper) {
+        super(looper);
+    }
+    
+    @Override
+    public void handleMessage(Message msg) {
+        switch (msg.what) {
+            case MSG_REPORT_EVENT:
+                reportEvent((UsageEvents.Event) msg.obj, msg.arg1);
+                break;
+            
+            case MSG_FLUSH_TO_DISK:
+                flushToDisk();
+                break;
+        }
+    }
+}
+```
+调用外部类的reportEvent方法：
+> UsageStatsService
+
+```java
+void reportEvent(UsageEvents.Event event, int userId) {
+    final UserUsageStatsService service = getUserDataAndInitializeIfNeededLocked(userId, timeNow);
+    service.reportEvent(event);
+}
+```
+
+> UserUsageStatsService
+
+```java
+void reportEvent(UsageEvents.Event event) {
+    final IntervalStats currentDailyStats = mCurrentStats[UsageStatsManager.INTERVAL_DAILY];
+    
+    // Add the event to the daily list.
+    if (currentDailyStats.events == null) {
+        currentDailyStats.events = new EventList();
+    }
+    if (event.mEventType != UsageEvents.Event.SYSTEM_INTERACTION) {
+        currentDailyStats.events.insert(event);
+    }
+    
+    for (IntervalStats stats : mCurrentStats) {
+        switch (event.mEventType) {
+            default: {
+                stats.update(event.mPackage, event.mTimeStamp, event.mEventType);
+                break;
+            }
+        }
+    }
+    notifyStatsChanged();
+}
+```
+- 第一步先把数据方法哦Daily所属的文件中，也就是放到内存中。
+- 第二步，调用IntervalStats的update方法实施更新。看看这里一连串的操作：
+
+> IntervalStats
+
+```java
+void update(String packageName, long timeStamp, int eventType) {
+    UsageStats usageStats = getOrCreateUsageStats(packageName);
+    usageStats.mEndTimeStamp = timeStamp;
+
+    if (eventType == UsageEvents.Event.MOVE_TO_FOREGROUND) {
+        usageStats.mLaunchCount += 1;
+    }
+
+    endTime = timeStamp;
+}
+
+UsageStats getOrCreateUsageStats(String packageName) {
+    UsageStats usageStats = packageStats.get(packageName);
+    if (usageStats == null) {
+        usageStats = new UsageStats();
+        usageStats.mPackageName = getCachedStringRef(packageName);
+        usageStats.mBeginTimeStamp = beginTime;
+        usageStats.mEndTimeStamp = endTime;
+        packageStats.put(usageStats.mPackageName, usageStats);
+    }
+    return usageStats;
+}
+```
+到这里可以知道每一种时间类型对应的IntervalStats对象里面维持一个UsageStats对象，这个对象里面包含了包名，开始使用时间，结束使用时间数据。
+
+数据都准备好了，接下来调用`notifyStatsChanged`：
+> UserUsageStatsService
+
+```java
+private void notifyStatsChanged() {
+    if (!mStatsChanged) {
+        mStatsChanged = true;
+        mListener.onStatsUpdated();
+    }
+}
+```
+而这里的mListener是UsageStatsService传递过来的，对应的onStatsUpdated在这个类中实现：
+> UsageStatsService
+
+```java
+private static final long TEN_SECONDS = 10 * 1000;
+private static final long TWENTY_MINUTES = 20 * 60 * 1000;
+private static final long FLUSH_INTERVAL = COMPRESS_TIME ? TEN_SECONDS : TWENTY_MINUTES;
+
+@Override
+public void onStatsUpdated() {
+    mHandler.sendEmptyMessageDelayed(MSG_FLUSH_TO_DISK, FLUSH_INTERVAL);
+}
+```
+还是在这个H类中处理，这里的FLUSH_INTERVAL是20分钟，也就是要间隔这么长时间才去写数据到磁盘：
+> UsageStatsService.H
+
+```java
+class H extends Handler {
+    public H(Looper looper) {
+        super(looper);
+    }
+    
+    @Override
+    public void handleMessage(Message msg) {
+        switch (msg.what) {
+            case MSG_FLUSH_TO_DISK:
+                flushToDisk();
+                break;
+        }
+    }
+}
+```
+> UsageStatsService
+
+```
+void flushToDisk() {
+    synchronized (mLock) {
+        flushToDiskLocked();
+    }
+}
+
+private void flushToDiskLocked() {
+    final int userCount = mUserState.size();
+    for (int i = 0; i < userCount; i++) {
+        UserUsageStatsService service = mUserState.valueAt(i);
+        service.persistActiveStats();
+    }
+    mHandler.removeMessages(MSG_FLUSH_TO_DISK);
+}
+```
+还是到`UserUsageStatsService`类中处理，而且有多个用户的话，为多个用户分别存储数据:
+> UserUsageStatsService
+
+```
+void persistActiveStats() {
+    if (mStatsChanged) {
+        try {
+            for (int i = 0; i < mCurrentStats.length; i++) {
+                mDatabase.putUsageStats(i, mCurrentStats[i]);
+            }
+            mStatsChanged = false;
+        } catch (IOException e) {
+        }
+    }
+}
+```
+这里将为各个时间间隔类型的文件中都写入数据。接下来在`UsageStatsDatabase`中调用`putUsageStats`方法：
+
+> UsageStatsDatabase
+
+```java
+public void putUsageStats(int intervalType, IntervalStats stats) throws IOException {
+    synchronized (mLock) {
+        //第一部分
+        AtomicFile f = mSortedStatFiles[intervalType].get(stats.beginTime);
+        if (f == null) {
+            f = new AtomicFile(new File(mIntervalDirs[intervalType],
+            Long.toString(stats.beginTime)));
+            mSortedStatFiles[intervalType].put(stats.beginTime, f);
+        }
+        
+        //第二部分
+        UsageStatsXml.write(f, stats);
+        stats.lastTimeSaved = f.getLastModifiedTime();
+    }
+}
+```
+> TimeSparseArray<AtomicFile>[] mSortedStatFiles，继承自LongSpareArray
+
+-第一部分中，先获取mSortedStatFiles中对应时间的文件是否存在，不存在的话就按照对应的时间间隔类型新建一个，创建完成之后将时间作为key，文件对象作为value添加到TimeSparseArray集合中。这个类型是有序的，而且会先通过二分查找这个key，如果存在，就要覆写数据了。
+
+通过调用`UsageStatsXml.write`方法执行写xml操作：
+> UsageStatsXml
+
+```java
+private static final String USAGESTATS_TAG = "usagestats";
+
+static void write(OutputStream out, IntervalStats stats) throws IOException {
+    FastXmlSerializer xml = new FastXmlSerializer();
+    xml.setOutput(out, "utf-8");
+    xml.startDocument("utf-8", true);
+    xml.setFeature("http://xmlpull.org/v1/doc/features.html#indent-output", true);
+    xml.startTag(null, USAGESTATS_TAG);
+    xml.attribute(null, VERSION_ATTR, Integer.toString(CURRENT_VERSION));
+
+    UsageStatsXmlV1.write(xml, stats);
+
+    xml.endTag(null, USAGESTATS_TAG);
+    xml.endDocument();
+}
+```
+开始标签是`USAGESTATS_TAG`，通过`UsageStatsXmlV1`写数据：
+
+> UsageStatsXmlV1
+
+```java
+public static void write(XmlSerializer xml, IntervalStats stats) throws IOException {
+    xml.startTag(null, PACKAGES_TAG);
+    final int statsCount = stats.packageStats.size();
+    for (int i = 0; i < statsCount; i++) {
+        writeUsageStats(xml, stats, stats.packageStats.valueAt(i));
+    }
+    xml.endTag(null, PACKAGES_TAG);
+}
+
+private static void writeUsageStats(XmlSerializer xml, final IntervalStats stats, final UsageStats usageStats) throws IOException {
+    xml.startTag(null, PACKAGE_TAG);
+
+    // Write the time offset.
+    XmlUtils.writeLongAttribute(xml, LAST_TIME_ACTIVE_ATTR, usageStats.mLastTimeUsed - stats.beginTime);
+
+    XmlUtils.writeStringAttribute(xml, PACKAGE_ATTR, usageStats.mPackageName);
+    XmlUtils.writeLongAttribute(xml, TOTAL_TIME_ACTIVE_ATTR, usageStats.mTotalTimeInForeground);
+    XmlUtils.writeIntAttribute(xml, LAST_EVENT_ATTR, usageStats.mLastEvent);
+    if (usageStats.mAppLaunchCount > 0) {
+        XmlUtils.writeIntAttribute(xml, APP_LAUNCH_COUNT_ATTR, usageStats.mAppLaunchCount);
+    }
+    writeChooserCounts(xml, usageStats);
+    xml.endTag(null, PACKAGE_TAG);
+}
+```
+到这里我们发现包名，时长，使用次数，mLastEvent对应的是前台或后台事件，是int类型，前台为1，后台为2，一天的结束时间事件为3。
+
+### 3.5 项目问题复盘
+- 结合源码分析问题
+
+基本上现在Android比较新的版本中，都将应用使用详情数据写到磁盘了，但是在Android 9.0以下的版本中没有将应用使用次数写到磁盘。另外还要面临延迟20分钟写磁盘的操作，如果每次都从磁盘取数据，在Android 9.0以下的版本中读取的的次数一定是不准确的。
+
+相关的版本差异如下：
+
+```java
+//Android 7.1
+private static void writeUsageStats(XmlSerializer xml, final IntervalStats stats,
+            final UsageStats usageStats) throws IOException {
+        xml.startTag(null, PACKAGE_TAG);
+        // Write the time offset.
+        XmlUtils.writeLongAttribute(xml, LAST_TIME_ACTIVE_ATTR,
+                usageStats.mLastTimeUsed - stats.beginTime);
+        XmlUtils.writeStringAttribute(xml, PACKAGE_ATTR, usageStats.mPackageName);
+        XmlUtils.writeLongAttribute(xml, TOTAL_TIME_ACTIVE_ATTR, usageStats.mTotalTimeInForeground);
+        XmlUtils.writeIntAttribute(xml, LAST_EVENT_ATTR, usageStats.mLastEvent);
+        xml.endTag(null, PACKAGE_TAG);
+    }
+//Android 8.1
+private static void writeUsageStats(XmlSerializer xml, final IntervalStats stats,
+        final UsageStats usageStats) throws IOException {
+    xml.startTag(null, PACKAGE_TAG);
+    // Write the time offset.
+    XmlUtils.writeLongAttribute(xml, LAST_TIME_ACTIVE_ATTR,
+            usageStats.mLastTimeUsed - stats.beginTime);
+    XmlUtils.writeStringAttribute(xml, PACKAGE_ATTR, usageStats.mPackageName);
+    XmlUtils.writeLongAttribute(xml, TOTAL_TIME_ACTIVE_ATTR, usageStats.mTotalTimeInForeground);
+    XmlUtils.writeIntAttribute(xml, LAST_EVENT_ATTR, usageStats.mLastEvent);
+    writeChooserCounts(xml, usageStats);
+    xml.endTag(null, PACKAGE_TAG);
+}
+
+//Android 9.0
+private static void writeUsageStats(XmlSerializer xml, final IntervalStats stats,
+        final UsageStats usageStats) throws IOException {
+    xml.startTag(null, PACKAGE_TAG);
+    // Write the time offset.
+    XmlUtils.writeLongAttribute(xml, LAST_TIME_ACTIVE_ATTR,
+            usageStats.mLastTimeUsed - stats.beginTime);
+    XmlUtils.writeStringAttribute(xml, PACKAGE_ATTR, usageStats.mPackageName);
+    XmlUtils.writeLongAttribute(xml, TOTAL_TIME_ACTIVE_ATTR, usageStats.mTotalTimeInForeground);
+    XmlUtils.writeIntAttribute(xml, LAST_EVENT_ATTR, usageStats.mLastEvent);
+    if (usageStats.mAppLaunchCount > 0) {
+        XmlUtils.writeIntAttribute(xml, APP_LAUNCH_COUNT_ATTR, usageStats.mAppLaunchCount);
+    }
+    writeChooserCounts(xml, usageStats);
+    xml.endTag(null, PACKAGE_TAG);
+}
+//Android 10.0
+private static void writeUsageStats(XmlSerializer xml, final IntervalStats stats,
+        final UsageStats usageStats) throws IOException {
+    xml.startTag(null, PACKAGE_TAG);
+    // Write the time offset.
+    XmlUtils.writeLongAttribute(xml, LAST_TIME_ACTIVE_ATTR,
+            usageStats.mLastTimeUsed - stats.beginTime);
+    XmlUtils.writeLongAttribute(xml, LAST_TIME_VISIBLE_ATTR,
+            usageStats.mLastTimeVisible - stats.beginTime);
+    XmlUtils.writeLongAttribute(xml, LAST_TIME_SERVICE_USED_ATTR,
+            usageStats.mLastTimeForegroundServiceUsed - stats.beginTime);
+    XmlUtils.writeStringAttribute(xml, PACKAGE_ATTR, usageStats.mPackageName);
+    XmlUtils.writeLongAttribute(xml, TOTAL_TIME_ACTIVE_ATTR, usageStats.mTotalTimeInForeground);
+    XmlUtils.writeLongAttribute(xml, TOTAL_TIME_VISIBLE_ATTR, usageStats.mTotalTimeVisible);
+    XmlUtils.writeLongAttribute(xml, TOTAL_TIME_SERVICE_USED_ATTR,
+            usageStats.mTotalTimeForegroundServiceUsed);
+    XmlUtils.writeIntAttribute(xml, LAST_EVENT_ATTR, usageStats.mLastEvent);
+    if (usageStats.mAppLaunchCount > 0) {
+        XmlUtils.writeIntAttribute(xml, APP_LAUNCH_COUNT_ATTR, usageStats.mAppLaunchCount);
+    }
+    writeChooserCounts(xml, usageStats);
+    xml.endTag(null, PACKAGE_TAG);
+}
+```
+到后面，写入的数据颗粒度越来越小，比如应用可见时长，前台服务到前台的时长等都被写入磁盘。这是因为后面Android在设置中也做了应用使用详情功能，如果这些数据不写入的话，数据会有出入。
+
+#### 3.4.1 问题解决方案
+
+项目早期，这个App属于系统级别的App，我们可以通过监听灭屏广播，在灭屏之后立即获取上一次灭屏到此次灭屏时间段内的应用使用数据，虽然这段时间间隔会大于20分钟，但是灭屏之后，最新的数据会先被写入内存，而之前的数据在大于20分钟会被写入磁盘导致一部分次数的数据丢失，但是出现的概率比较低，可以接受。
+
+到项目后期，App的系统级别属性被去掉，只能作为一个普通App开发了，这里一方面修改framework，将应用使用次数也持久化到磁盘；如果framework的这个patch没有集成的话，可以在另外一个系统级服务中实现之前早期项目App的那一套保存数据逻辑，将数据即时存到本地数据库，并对外提供数据接口，同时加强权限判断，避免被乱用。这样App就可以获取到最新的数据了。
+
+
+微信公众号：![微信公众号](https://ftp.bmp.ovh/imgs/2020/04/f472fa7e9c62a8c7.jpg)
+
+
+
