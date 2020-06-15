@@ -1,0 +1,294 @@
+---
+layout: post
+title:  "Android项目总结复盘2"
+date:   2020-6-12 9:53:25 +0800
+categories: Android
+---
+
+> 文章将会同步到个人微信公众号：Android部落格
+
+## 2、系统数据检查
+### 2.1 dex更新
+我们开发的java代码通过编译生成.class文件，然后通过dx工具生成机器可以识别的dex文件。
+
+Android中采用ClassLoader加载dex文件，加载完成之后可以通过反射调用其中的方法，适合那些不依赖文件等资源的业务，而打点恰好比较适合使用dex加载的方式。
+
+Android中有PathClassLoader和DexClassLoader ，他们都继承自ClassLoader。他们的继承关系如下：
+
+![](https://ftp.bmp.ovh/imgs/2020/06/dc4eb4a872e1fb9f.jpg)
+
+- DexClassLoader：可以加载jar/apk/dex，可以从SD卡中加载未安装的apk；
+- PathClassLoader：要传入系统中apk的存放Path，所以只能加载已经安装的apk文件。
+- BaseDexClassLoader是DexClassLoader和PathClassLoader的父类，针对传入不同的参数做差异化处理。
+
+看看三个类的源码：
+
+#### 2.1.1 PathClassLoader
+
+> dalvik/system/PathClassLoader.java
+
+```java
+public class PathClassLoader extends BaseDexClassLoader {
+    public PathClassLoader(String dexPath, ClassLoader parent) {
+        super(dexPath, null, null, parent);
+    }
+    
+    public PathClassLoader(String dexPath, String librarySearchPath, ClassLoader parent) {
+        super(dexPath, null, librarySearchPath, parent);
+    }
+}
+```
+
+#### 2.1.2 DexClassLoader
+
+> dalvik/system/DexClassLoader.java
+
+```java
+public class DexClassLoader extends BaseDexClassLoader {
+    public DexClassLoader(String dexPath, String optimizedDirectory, String librarySearchPath, ClassLoader parent) {
+        super(dexPath, null, librarySearchPath, parent);
+    }
+}
+```
+
+#### 2.1.3 BaseDexClassLoader
+
+```java
+public class BaseDexClassLoader extends ClassLoader {
+    private final DexPathList pathList;
+    public BaseDexClassLoader(String dexPath, File optimizedDirectory,
+            String librarySearchPath, ClassLoader parent) {
+        this(dexPath, optimizedDirectory, librarySearchPath, parent, false);
+    }
+    
+    public BaseDexClassLoader(String dexPath, File optimizedDirectory,
+            String librarySearchPath, ClassLoader parent, boolean isTrusted) {
+        super(parent);
+        this.pathList = new DexPathList(this, dexPath, librarySearchPath, null, isTrusted);
+
+        if (reporter != null) {
+            reportClassLoaderChain();
+        }
+    }
+    
+    public BaseDexClassLoader(ByteBuffer[] dexFiles, ClassLoader parent) {
+        // TODO We should support giving this a library search path maybe.
+        super(parent);
+        this.pathList = new DexPathList(this, dexFiles);
+    }
+```
+在BaseDexClassLoader中通过DexPathList类具体的处理Dex，他的构造函数如下：
+
+#### 2.1.4 DexPathList
+
+```java
+private Element[] dexElements;
+DexPathList(ClassLoader definingContext, String dexPath, String librarySearchPath, File optimizedDirectory, boolean isTrusted) {
+    this.dexElements = makeDexElements(splitDexPath(dexPath), optimizedDirectory, suppressedExceptions, definingContext, isTrusted);
+}
+            
+private static Element[] makeDexElements(List<File> files, File optimizedDirectory, List<IOException> suppressedExceptions, ClassLoader loader, boolean isTrusted) {
+    Element[] elements = new Element[files.size()];
+    int elementsPos = 0;
+    for (File file : files) {
+        if (file.isDirectory()) {
+            elements[elementsPos++] = new Element(file);
+        } else if (file.isFile()) {
+            String name = file.getName();
+            
+            DexFile dex = null;
+            dex = loadDexFile(file, optimizedDirectory, loader, elements);
+        }
+    }
+    retrun elements;
+}
+
+private static DexFile loadDexFile(File file, File optimizedDirectory, ClassLoader loader, Element[] elements) throws IOException {
+    if (optimizedDirectory == null) {
+        return new DexFile(file, loader, elements);
+    } else {
+        String optimizedPath = optimizedPathFor(file, optimizedDirectory);
+        return DexFile.loadDex(file.getPath(), optimizedPath, 0, loader, elements);
+    }
+}
+```
+最终通过DexFile加载loadDex方法在native层实现对dex的加载和处理。
+
+而分析`PathClassLoader`和`DexClassLoader`的构造函数可以看到Android 9.0中的DexClassLoader构造函数的optimizedDirectory参数默认是null。所以这里要针对版本的不同做差异化处理。
+
+我们一般加载Dex的方式是：
+
+```java
+classLoader = context.getClassLoader();
+classLoader.loadClass("you class path");
+```
+
+这里做一下差异化：
+
+```java
+public ClassLoader load(Context context,String dexName) {
+    mLoaded = false;
+    ClassLoader classLoader = null;
+    File dexOutputDir = context.getDir("dex", 0);
+    File dexFile = new File(dexOutputDir.getAbsolutePath(), dexName);
+    Log.d(TAG, "load start");
+    if (!dexFile.exists()) {
+        return null;
+    }
+    String dexPath = dexFile.getAbsolutePath();
+    Log.d(TAG, "dPath = " + dexPath);
+    int version = android.os.Build.VERSION.SDK_INT;
+    if (version >= 25) {
+        BaseDexClassLoader parent = (BaseDexClassLoader) context.getClassLoader();
+        Class<BaseDexClassLoader> c = BaseDexClassLoader.class;
+        Method method;
+        try {
+            method = c.getMethod("addDexPath", String.class);
+            method.invoke(parent, dexPath);
+            mLoaded = true;
+            classLoader = parent;
+            return classLoader;
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+    Log.d(TAG, "mLoaded1 = " + mLoaded);
+    if (!mLoaded) {
+        ArrayList<File> files = new ArrayList<File>();
+        files.add(dexFile);
+
+        classLoader = context.getClassLoader();
+        classLoader.loadClass("you class path");
+        try {
+            Field pathListField = findField(classLoader, "pathList");
+            Object dexPathList = pathListField.get(classLoader);
+            ArrayList<IOException> suppressedExceptions = new ArrayList<IOException>();
+            if (version < 19) {
+                expandFieldArray(dexPathList, "dexElements",
+                        makeDexElements(dexPathList, files, null));
+            } else if (version < 23) {
+                expandFieldArray(dexPathList, "dexElements",
+                        makeDexElements(dexPathList, files, null, suppressedExceptions));
+            } else {
+                expandFieldArray(dexPathList, "dexElements",
+                        makePathElements(dexPathList, files, null, suppressedExceptions));
+            }
+
+        } catch (Exception e1) {
+            e1.printStackTrace();
+        }
+    }
+    Log.d(TAG, "mLoaded2 = " + mLoaded);
+    if (mLoaded) {
+        return classLoader;
+    }
+    return null;
+}
+```
+- SDK_INI大于等于25
+
+当sdk_int大于等于25时，通过反射BaseDexClassLoader的addDexPath方法直接添加dex文件到DexPathList的Element[]数组中，而后续findClass方法的逻辑就是遍历这个数据找到对应的dex文件。
+
+- SDK_INI小于25
+
+这种情况下，先反射获取ClassLoader的pathList对象，这里的ClassLoader实际是PathClassLoader，但是最终都会到BaseDexClassLoader的pathList。
+
+获取到这个变量之后，先调用`makeDexElements`方法将生成的dex对象放到一个数组中，接着在`expandFieldArray`方法中将就的dex数组和新的dex数组合并：
+
+```java
+private Object[] makeDexElements(Object dexPathList, ArrayList<File> files, File optimizedDirectory) throws IllegalAccessException, InvocationTargetException, NoSuchMethodException {
+    Method makeDexElements = findMethod(dexPathList, "makeDexElements", ArrayList.class, File.class);
+
+    return (Object[]) makeDexElements.invoke(dexPathList, files, optimizedDirectory);
+}
+```
+这里的`makeDexElements`方法对应的是`DexPathList`的`makeDexElements`方法，最终目的是将dex对象添加到`Element[]`数组中，作为新的数组返回。
+
+`expandFieldArray`对应的是`DexPathList`的`addDexPath`方法，将新旧`Element[]`数组合到一个数组中，旧的数组在前面。这样就导致了相同文件名的dex文件，最新修复了bug的dex不能立即生效。
+
+
+```java
+private void expandFieldArray(Object instance, String fieldName, Object[] extraElements) throws NoSuchFieldException, IllegalArgumentException, IllegalAccessException {
+    Field jlrField = findField(instance, fieldName);
+    Object[] original = (Object[]) jlrField.get(instance);
+    Object[] combined = (Object[]) Array.newInstance(original.getClass()
+            .getComponentType(), original.length + extraElements.length);
+    System.arraycopy(original, 0, combined, 0, original.length);
+    System.arraycopy(extraElements, 0, combined, original.length,
+            extraElements.length);
+    jlrField.set(instance, combined);
+    mLoaded = true;
+    Log.d(TAG, "expandFieldArray");
+}
+```
+对比看下`DexPathList`中的`addDexPath`方法：
+
+```java
+public void addDexPath(String dexPath, File optimizedDirectory, boolean isTrusted) {
+    final List<IOException> suppressedExceptionList = new ArrayList<IOException>();
+    final Element[] newElements = makeDexElements(splitDexPath(dexPath), optimizedDirectory,
+            suppressedExceptionList, definingContext, isTrusted);
+    
+    if (newElements != null && newElements.length > 0) {
+        final Element[] oldElements = dexElements;
+        dexElements = new Element[oldElements.length + newElements.length];
+        System.arraycopy(
+                oldElements, 0, dexElements, 0, oldElements.length);
+        System.arraycopy(
+                newElements, 0, dexElements, oldElements.length, newElements.length);
+    }
+}
+```
+可见我们自己的操作对应着`DexPathList`的`addDexPath`方法。
+
+在我们自己的`expandFieldArray`方法最后通过执行`jlrField.set(instance, combined);`，将合并后的`Element[]`数组赋值给`DexPathList`的`Element[] dexElements`。
+
+当上述操作完成之后，就要调用loadClass方法加载dex文件中的类了，这个方法在ClassLoader类中定义：
+```java
+protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException
+{
+    Class<?> c = findLoadedClass(name);
+    if (parent != null) {
+        c = parent.loadClass(name, false);
+    } else {
+        c = findBootstrapClassOrNull(name);
+    }
+    if (c == null) {
+        c = findClass(name);
+    }
+    return c;            
+}
+```
+`parent`由`Context.getClassLoader`所属的PathClassLoader传递，一直从`BaseDexClassLoader`到`ClassLoader`。
+
+到这里要熟悉应用被创建初始化的流程了，这里先不引申过去，只需要知道这个parent是`BootClassLoader`类型。
+
+```java
+@Override
+protected Class<?> loadClass(String className, boolean resolve)
+       throws ClassNotFoundException {
+    Class<?> clazz = findLoadedClass(className);
+
+    if (clazz == null) {
+        clazz = findClass(className);
+    }
+
+    return clazz;
+}
+```
+如果还找不到，就调用`BaseDexClassLoader`的`findClass`方法了。
+
+```java
+@Override
+protected Class<?> findClass(String name) throws ClassNotFoundException {
+    List<Throwable> suppressedExceptions = new ArrayList<Throwable>();
+    Class c = pathList.findClass(name, suppressedExceptions);
+    return c;
+}
+```
+到这里如果还找不到就抛异常出来了，`ClassNotFoundException`。
+
+上边的流程就是各大博客上面说的双亲委派机制，父类先从已经加载的类里面找，找不到的话，再从自己`BaseDexClassLoader`的`findClass`方法里面去找。
+
+#### 2.1.5 问题复盘
+到这里，基本就将Dex加载的流程搞清楚了，但是这样的加载会导致新加载的Dex不能立即生效，必须重新启动应用之后才能生效。针对这种问题，可以将Dex热更新模块放到一个单独的进程中，当Dex加载完毕之后，调用killProcess方法自杀，然后由另一个进程拉活重启。
