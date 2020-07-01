@@ -1,0 +1,249 @@
+---
+layout: post
+title:  "Android项目总结复盘5"
+date:   2020-7-1 19:46:25 +0800
+categories: Android
+---
+
+> 文章将会同步到个人微信公众号：Android部落格
+
+## 1、项目需求
+项目整体的需求是Android盒子支持上下左右控制云台摄像头，还要能相对和绝对控制摄像头的位置。相对控制，意思就是按着左方向键不放，摄像头一直往左边转，到最大值为止，反之亦然；绝对控制，意思是每次按一下方向键，就转一个角度就停下来。
+
+## 2、需求实现
+最终选择通过定制Android kernel层的uvc代码，编译kernel，打包固件，刷机，编写上层App，从上到下打通控制流程。
+
+## 3、灵感来源
+验证Android盒子是否支持控制云台摄像头，只需要将摄像头连接到ubuntu虚拟机，通过ubuntu上面的工具即可以控制摄像头旋转，也就可以通过改造Android的kernel支持对应的功能。
+
+之前的文章里面有提到过，使用`uvcdynctrl`工具，输入对应的指令就行，这里看看他的源码是怎么实现的：
+
+> https://github.com/llmike/v4l2-tools/blob/master/libwebcam-src-0.2.4/libwebcam/libwebcam.c
+
+```c
+struct v4l2_control v4l2_ctrl = {
+    .id		= control->v4l2_control,
+    .value	= value->value
+};
+if(ioctl(v4l2_dev, VIDIOC_S_CTRL, &v4l2_ctrl)) {
+    ret = C_V4L2_ERROR;
+    set_last_error(hDevice, errno);
+}
+
+struct v4l2_control v4l2_ctrl = { .id = control->v4l2_control };
+if(ioctl(v4l2_dev, VIDIOC_G_CTRL, &v4l2_ctrl)) {
+	ret = C_V4L2_ERROR;
+	set_last_error(hDevice, errno);
+	goto done;
+}
+value->value	= v4l2_ctrl.value;
+```
+
+`VIDIOC_S_CTRL`和`VIDIOC_G_CTRL`的解释详见如下链接，一个用于设置参数，一个用于获取参数。
+
+[https://www.linuxtv.org/downloads/legacy/video4linux/API/V4L2_API/spec-single/v4l2.html#vidioc-g-ctrl](https://www.linuxtv.org/downloads/legacy/video4linux/API/V4L2_API/spec-single/v4l2.html#vidioc-g-ctrl)
+
+`v4l2_control`是两个操作中间的媒介，新的数据可以通过`VIDIOC_S_CTRL`传递这个结构体；当设置id之后，通过`VIDIOC_G_CTRL`，可以返回需要的数据。
+
+这个id填什么参数呢？是`struct uvc_control_mapping uvc_ctrl_mappings`中对应的id，这个id就是具体摄像头支持的参数id，在设置之前先要查询摄像头支持的参数，只有它支持之后才能设置。
+
+### 3.1 上层JNI代码编写
+获取摄像头支持的控制参数：
+
+```c
+jboolean queryControls(){
+	jint canControl = 0;
+	__android_log_print(ANDROID_LOG_ERROR , TAG , "设备号=%d" , fd);
+
+	struct v4l2_queryctrl qctrl;
+	qctrl.id = V4L2_CTRL_CLASS_CAMERA | V4L2_CTRL_FLAG_NEXT_CTRL;
+	int i = ioctl(fd, VIDIOC_QUERYCTRL, &qctrl);
+	while (0 == i){
+		__android_log_print(ANDROID_LOG_ERROR , TAG , "开始查找");
+		if (V4L2_CTRL_ID2CLASS(qctrl.id) != V4L2_CTRL_CLASS_CAMERA)
+			continue;
+
+		if(strcmp(qctrl.name , CONTROL_FLAG_PAN) == 0 || strcmp(qctrl.name , CONTROL_FLAG_TILT) == 0
+							|| strcmp(qctrl.name , CONTROL_FLAG_ZOOM) == 0){
+			++canControl;
+		}
+
+		__android_log_print(ANDROID_LOG_ERROR , TAG , "找到的控制函数是%s" , qctrl.name);
+		__android_log_print(ANDROID_LOG_ERROR , TAG , "继续查找");
+		__android_log_print(ANDROID_LOG_ERROR , TAG , "id = %d" , qctrl.id);
+		__android_log_print(ANDROID_LOG_ERROR , TAG , "Next_Ctrl = %x" , V4L2_CTRL_FLAG_NEXT_CTRL);
+		__android_log_print(ANDROID_LOG_ERROR , TAG , "Camera_Class = %x" , V4L2_CTRL_CLASS_CAMERA);
+
+		qctrl.id |= V4L2_CTRL_FLAG_NEXT_CTRL;
+
+		__android_log_print(ANDROID_LOG_ERROR , TAG , "id+ = %x" , qctrl.id);
+
+		i = ioctl(fd, VIDIOC_QUERYCTRL, &qctrl);
+		if(i != 0){
+			__android_log_print(ANDROID_LOG_ERROR, TAG,"uvcioc ctrl add error: errno=%d (reason=%s)\n", errno,strerror(errno));
+		}
+	}
+	//如果存在ptz控制的话，应该会有Pan,Tilt,Zoom字符串，变量自加三次
+	return canControl == 3;
+}
+```
+
+获取某个id当前对应的值：
+```c
+int getControlValue(int controlId){
+	//an array of v4l2_ext_control
+	struct v4l2_ext_control clist[1];
+	struct v4l2_ext_controls ctrls;
+
+	memset(&clist, 0, sizeof(clist));
+	memset(&ctrls, 0, sizeof(ctrls));
+
+	clist[0].id    = controlId;
+	clist[0].value = 0;
+
+	//v4l2_ext_controls with list of v4l2_ext_control
+	ctrls.ctrl_class = V4L2_CTRL_CLASS_CAMERA;
+	ctrls.count = 1;
+	ctrls.controls = clist;
+
+	//read back the value
+	if (-1 == xioctl (fd, VIDIOC_G_EXT_CTRLS, &ctrls))
+	{
+		__android_log_print(ANDROID_LOG_ERROR,TAG,"get current value failed fd = %d,reason=%s" , fd,strerror(errno));
+		return -1;
+	}
+	__android_log_print(ANDROID_LOG_ERROR,TAG,"get before value success , %d" , clist[0].value);
+	return clist[0].value;
+}
+```
+
+设置某个参数的值，也就是开始控制摄像头左右上下转动了：
+
+```c
+int startControl(int controlId , int value){
+    //an array of v4l2_ext_control
+    struct v4l2_ext_control clist[1];
+    struct v4l2_ext_controls ctrls;
+    CLEAR(clist);
+    CLEAR(ctrls);
+    
+    clist[0].id    = controlId;
+    clist[0].value = value;
+    
+    //v4l2_ext_controls with list of v4l2_ext_control
+    ctrls.ctrl_class = V4L2_CTRL_CLASS_CAMERA;
+    ctrls.count = 1;
+    ctrls.controls = clist;
+    
+    int result = xioctl(fd, VIDIOC_S_EXT_CTRLS, &ctrls);
+}
+```
+`v4l2_ext_control`对应的value值应该按照协议文档中对值的定义来传，比如左右绝对控制的值对应的是转动的角度；左右相对控制分为四位，每一个位表示不同的控制方式，需要按照不同的id传递不同的值。
+
+`v4l2_ext_controls`可以在一个id下同时要控制多个参数，具体详见：
+[https://www.linuxtv.org/downloads/legacy/video4linux/API/V4L2_API/spec-single/v4l2.html#v4l2-ext-control](https://www.linuxtv.org/downloads/legacy/video4linux/API/V4L2_API/spec-single/v4l2.html#v4l2-ext-control)。
+
+## 4、底层定制
+上边的代码写好了之后，可以先选取某个非控制左右上下转动的id试一下，看看能否正确控制，然后再去调试pan，tilt功能。
+
+一般情况下要和摄像头厂商配合联调，因为摄像头厂商的固件也要适配UVC协议。其中UVC协议版本是个大问题，在Android kernel中查看UVC版本的地方在：
+
+> goldfish\drivers\media\usb\uvc\uvcvideo.h
+
+```c
+#define DRIVER_VERSION		"1.1.1"
+```
+如果kernel中UVC版本与摄像头固件UVC版本不一致，会导致控制位不匹配，导致控制返回失败。
+
+到这里可以知道摄像头的固件版本，支持的控制参数，从而可以知道盒子Android底层kernel的定制方向了。当前项目的定制方向是添加pan和tilt的相对控制能力。定制流程如下：
+
+> goldfish\include\uapi\linux\v4l2-controls.h
+
+在这个文件中相对控制的速度：
+
+```c
+#define V4L2_CID_PAN_SPEED (V4L2_CID_CAMERA_CLASS_BASE+32)
+#define V4L2_CID_TILT_SPEED (V4L2_CID_CAMERA_CLASS_BASE+33)
+```
+
+> goldfish\drivers\media\v4l2-core\v4l2-ctrls.c
+
+文件中添加相对控制速度的描述：
+```c
+const char *v4l2_ctrl_get_name(u32 id)
+{
+    case V4L2_CID_PAN_SPEED: return "Pan, Speed";
+    case V4L2_CID_TILT_SPEED: return "Tilt, Speed";
+}
+```
+
+> goldfish\drivers\media\usb\uvc\uvc_ctrl.c
+
+这个文件是核心的控制文件，里面包含了设置和获取的方法，最终都到这个文件中实现，在这里我们需要添加相对控制的方法：
+
+```c
+#define UVC_CTRL_RELATIVE_PAN 10094852
+#define UVC_CTRL_RELATIVE_TILT 10094853
+#define UVC_CTRL_RELATIVE_ZOOM 10094863
+
+static struct uvc_control_info uvc_ctrls[] = {
+    static struct uvc_control_mapping uvc_ctrl_mappings[] = {
+    {
+		 .id = V4L2_CID_PAN_RELATIVE,
+		 .name = "Pan (Relative)",
+		 .entity = UVC_GUID_UVC_CAMERA,
+		 .selector = UVC_CT_PANTILT_RELATIVE_CONTROL,
+		 .size = 16,
+		 .offset = 0,
+		 .v4l2_type = V4L2_CTRL_TYPE_INTEGER,
+		 .data_type = UVC_CTRL_DATA_TYPE_SIGNED,
+		 .get = uvc_ctrl_get_rel_speed,
+		 .set = uvc_ctrl_set_rel_speed,
+	 },
+	 {
+ 		.id = V4L2_CID_TILT_RELATIVE,
+	 	.name = "Tilt (Relative)",
+	 	.entity = UVC_GUID_UVC_CAMERA,
+		.selector = UVC_CT_PANTILT_RELATIVE_CONTROL,
+		.size = 16,
+		.offset = 16,
+		.v4l2_type = V4L2_CTRL_TYPE_INTEGER,
+		.data_type = UVC_CTRL_DATA_TYPE_SIGNED,
+		.get = uvc_ctrl_get_rel_speed,
+		.set = uvc_ctrl_set_rel_speed,
+	 },
+    }
+}
+
+static __s32 uvc_ctrl_get_rel_speed(struct uvc_control_mapping *mapping,
+ __u8 query, const __u8 *data)
+{
+    int first = mapping->offset / 8;
+    __s8 rel = (__s8)data[first];
+
+    switch (query) {
+     case UVC_GET_CUR:
+     return (rel == 0) ? 0 : (rel > 0 ? data[first+1]
+     : -data[first+1]);
+     case UVC_GET_MIN:
+     return -data[first+1];
+     case UVC_GET_MAX:
+     case UVC_GET_RES:
+     case UVC_GET_DEF:
+     default:
+     return data[first+1];
+    }
+}
+
+static void uvc_ctrl_set_rel_speed(struct uvc_control_mapping *mapping,
+ __s32 value, __u8 *data)
+{
+    int first = mapping->offset / 8;
+
+    data[first] = value == 0 ? 0 : (value > 0) ? 1 : 0xff;
+    data[first+1] = min_t(int, abs(value), 0xff);
+}
+```
+在映射集合里面添加相对控制参数，还要添加控制和获取速度的方法。
+
+到这里上层编写和底层定制基本完成。

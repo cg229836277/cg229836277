@@ -1,0 +1,336 @@
+---
+layout: post
+title:  "Android项目总结复盘4"
+date:   2020-7-1 19:46:25 +0800
+categories: Android
+---
+
+> 文章将会同步到个人微信公众号：Android部落格
+
+> UVC协议文档网址：https://www.usb.org/documents?search=&type%5B0%5D=55&items_per_page=50
+> 
+> 主要下载USB Video Class 1_5，关注下载zip包中的UVC 1.5 Class specification.pdf文件，里面有接口相关的解释。
+>
+> Android盒子控制摄像头项目已经差不多4年了，很多知识点已经忘记，现在重新温固一遍，下面两篇文章可以帮助回顾。
+>
+> [https://my.oschina.net/u/2007478/blog/968470](https://my.oschina.net/u/2007478/blog/968470)
+>
+> [https://blog.csdn.net/go_str/article/details/80844175](https://blog.csdn.net/go_str/article/details/80844175)
+>
+> 下边两个网址中可以找到代码中各种结构体的解释：
+> 
+> [https://www.kernel.org/doc/html/v4.13/media/v4l-drivers/uvcvideo.html](https://www.kernel.org/doc/html/v4.13/media/v4l-drivers/uvcvideo.html) 
+> 
+> [https://www.linuxtv.org/downloads/legacy/video4linux/API/V4L2_API/spec-single/v4l2.html](https://www.linuxtv.org/downloads/legacy/video4linux/API/V4L2_API/spec-single/v4l2.html)
+
+
+## 1、Linux kernel下的UVC
+我们先从Android官网git clone一下kernel的源码：
+> https://android.googlesource.com/kernel/goldfish/
+>
+> git clone https://android.googlesource.com/kernel/goldfish
+
+clone到本地之后就可以通过Source Insight查看源码了。查看源码之前先project -> rebuild project，这样代码中各对象之间可以点击跳转。
+
+### 1.1 初始化
+> goldfish\drivers\media\usb\uvc\uvc_driver.c
+
+```c
+static int __init uvc_init(void)
+{
+	int ret;
+	ret = usb_register(&uvc_driver.driver);
+	return 0;
+}
+
+struct uvc_driver uvc_driver = {
+	.driver = {
+		.name		= "uvcvideo",
+		.probe		= uvc_probe,
+		.disconnect	= uvc_disconnect,
+		.suspend	= uvc_suspend,
+		.resume		= uvc_resume,
+		.reset_resume	= uvc_reset_resume,
+		.id_table	= uvc_ids,
+		.supports_autosuspend = 1,
+	},
+};
+```
+在入口函数`uvc_init`中，核心的一行是`usb_register`，也就是注册USB设备，在注册完成之后会调用`uvc_probe`函数。
+
+> goldfish\include\linux\usb.h
+
+```c
+struct usb_driver {
+	const char *name;
+
+	int (*probe) (struct usb_interface *intf,
+		      const struct usb_device_id *id);
+```
+
+看看这个`uvc_probe`函数：
+
+> goldfish\drivers\media\usb\uvc\uvc_driver.c
+
+```c
+static int uvc_probe(struct usb_interface *intf,
+		     const struct usb_device_id *id)
+{
+	struct usb_device *udev = interface_to_usbdev(intf);
+	struct uvc_device *dev;
+	int ret;
+
+	if (id->idVendor && id->idProduct)
+		uvc_trace(UVC_TRACE_PROBE, "Probing known UVC device %s "
+				"(%04x:%04x)\n", udev->devpath, id->idVendor,
+				id->idProduct);
+	else
+		uvc_trace(UVC_TRACE_PROBE, "Probing generic UVC device %s\n",
+				udev->devpath);
+    
+    uvc_parse_control(dev);//1
+    v4l2_device_register(&intf->dev, &dev->vdev);//2
+    uvc_ctrl_init_device(dev);//3
+    uvc_scan_device(dev);
+    uvc_register_chains(dev);
+    usb_set_intfdata(intf, dev);
+    ret = uvc_status_init(dev);
+    usb_enable_autosuspend(udev);
+}
+```
+- 每一个摄像头设备在底层初始化完成之后，都会有一个vendorId和productId。
+- `uvc_parse_control`会根据设备的vendorId和productId去对特定厂商的摄像头做一些适配。
+- `v4l2_device_register`，该方法将设备注册到v4l2，v4l2是Video for linux2的简称，为linux中关于视频设备的内核驱动。该方法在`goldfish\drivers\media\v4l2-core\v4l2-device.c`中。
+- `uvc_ctrl_init_device`，初始化设备控制。
+
+### 1.2 初始化设备控制
+这里是我们需要重点关注的。可以先跟踪一下这个调用栈。
+> goldfish\drivers\media\usb\uvc\uvc_ctrl.c
+
+```c
+int uvc_ctrl_init_device(struct uvc_device *dev)
+{
+    list_for_each_entry(entity, &dev->entities, list) {
+		struct uvc_control *ctrl;
+		unsigned int bControlSize = 0, ncontrols;
+		__u8 *bmControls = NULL;
+		//第一部分
+		if (UVC_ENTITY_TYPE(entity) == UVC_VC_EXTENSION_UNIT) {
+			bmControls = entity->extension.bmControls;
+			bControlSize = entity->extension.bControlSize;
+		} else if (UVC_ENTITY_TYPE(entity) == UVC_VC_PROCESSING_UNIT) {
+			bmControls = entity->processing.bmControls;
+			bControlSize = entity->processing.bControlSize;
+		} else if (UVC_ENTITY_TYPE(entity) == UVC_ITT_CAMERA) {
+			bmControls = entity->camera.bmControls;
+			bControlSize = entity->camera.bControlSize;
+		}
+		//第二部分
+		/* Initialize all supported controls */
+		ctrl = entity->controls;
+		for (i = 0; i < bControlSize * 8; ++i) {
+			if (uvc_test_bit(bmControls, i) == 0)
+				continue;
+
+			ctrl->entity = entity;
+			ctrl->index = i;
+
+			uvc_ctrl_init_ctrl(dev, ctrl);
+			ctrl++;
+		}
+	}
+}
+```
+#### 1.2.1 ENTITY类型过滤
+
+用于区分终端类型，重点关注`UVC_ITT_CAMERA`类型，看看这个类型在UVC协议文档里面的定义：
+
+![](https://ftp.bmp.ovh/imgs/2020/06/612814550d3f6bb5.png)
+
+摄像头传感器，仅用于描述摄像头终端。那么代码里面的描述是：
+
+> goldfish\include\uapi\linux\usb\video.h
+
+```c
+/* B.2. Input Terminal Types */
+#define UVC_ITT_VENDOR_SPECIFIC				0x0200
+#define UVC_ITT_CAMERA					0x0201
+#define UVC_ITT_MEDIA_TRANSPORT_INPUT			0x0202
+```
+
+#### 1.2.2 初始化uvc_control
+
+从第一部分中取出`camera.bmControls`和`camera.bControlSize`，这两个变量是干嘛的呢，还是看协议文档：
+![](https://ftp.bmp.ovh/imgs/2020/06/8968c359b0b5fc9b.png)
+![](https://ftp.bmp.ovh/imgs/2020/06/fdf441b15a72d2f9.png)
+
+`bControlSize`是对应着`bmControls`的位大小；
+`bmControls`对应着摄像头支持的控制参数，如果控制参数位置为1，表示支持该控制。
+
+#### 1.2.2.1 方法uvc_ctrl_init_ctrl
+接下来调用`uvc_ctrl_init_ctrl`方法：
+
+> goldfish\drivers\media\usb\uvc\uvc_ctrl.c
+
+```c
+static void uvc_ctrl_init_ctrl(struct uvc_device *dev, struct uvc_control *ctrl)
+{
+	const struct uvc_control_info *info = uvc_ctrls;
+	const struct uvc_control_info *iend = info + ARRAY_SIZE(uvc_ctrls);
+	const struct uvc_control_mapping *mapping = uvc_ctrl_mappings;
+	const struct uvc_control_mapping *mend = mapping + ARRAY_SIZE(uvc_ctrl_mappings);
+	
+	for (; info < iend; ++info) {
+		if (uvc_entity_match_guid(ctrl->entity, info->entity) &&
+		    ctrl->index == info->index) {
+			uvc_ctrl_add_info(dev, ctrl, info);
+			break;
+		 }
+	}
+
+	if (!ctrl->initialized)
+		return;
+
+	for (; mapping < mend; ++mapping) {
+		if (uvc_entity_match_guid(ctrl->entity, mapping->entity) &&
+		    ctrl->info.selector == mapping->selector)
+			__uvc_ctrl_add_mapping(dev, ctrl, mapping);
+	}
+}
+```
+
+##### 1.2.2.2 结构体uvc_control_info
+- **uvc_ctrls**，这个结构体的类型是`uvc_control_info`，是一个静态数组。可以理解为一个实体类别下对应着多个控制功能，每个功能有对应着不同的操作方式，以当前项目需要用到的功能举例：
+
+```c
+static struct uvc_control_info uvc_ctrls[] = {
+	{
+		.entity		= UVC_GUID_UVC_CAMERA,
+		.selector	= UVC_CT_PANTILT_ABSOLUTE_CONTROL,
+		.index		= 11,
+		.size		= 8,
+		.flags		= UVC_CTRL_FLAG_SET_CUR
+				| UVC_CTRL_FLAG_GET_RANGE
+				| UVC_CTRL_FLAG_RESTORE
+				| UVC_CTRL_FLAG_AUTO_UPDATE,
+	},
+	{
+		.entity		= UVC_GUID_UVC_CAMERA,
+		.selector	= UVC_CT_PANTILT_RELATIVE_CONTROL,
+		.index		= 12,
+		.size		= 4,
+		.flags		= UVC_CTRL_FLAG_SET_CUR | UVC_CTRL_FLAG_GET_MIN
+				| UVC_CTRL_FLAG_GET_MAX | UVC_CTRL_FLAG_GET_RES
+				| UVC_CTRL_FLAG_GET_DEF
+				| UVC_CTRL_FLAG_AUTO_UPDATE,
+	},
+}
+```
+- **entity** 实体是一种类型，`UVC_GUID_UVC_CAMERA`只是其中一种，还有`UVC_GUID_UVC_PROCESSING`等。
+
+- **selector** 对应的是实体下的一种功能，比如相对绝对转动。
+
+- **index** 对应着在`uvc_ctrls`中的序号。
+> /* Bit index in bmControls */
+
+- **size** 对应着具体操作位的长度，比如上边列举出来的`UVC_CT_PANTILT_ABSOLUTE_CONTROL`和`UVC_CT_PANTILT_RELATIVE_CONTROL`控制，看看在协议文档中的定义：
+![](https://ftp.bmp.ovh/imgs/2020/06/7b49813393d6df2a.png)
+
+![](https://ftp.bmp.ovh/imgs/2020/06/5c59f29889c77c73.png)
+
+对于PanTilt Absolute来说，高四位代表着左右的角度，低四位代表着上下的角度，都是有符号整数，总共八位，所以size为8。
+
+对于PanTilt Relative来说，总共四位，每一位代表不同的控制属性，第一位表示左右相对；第二位表示左右控制的速度；第三位表示上下相对；第四位表示上下的速度。所以size为4。
+
+- **flags** 表示对于这些`selector`支持的功能操作：
+详细的解释如下：
+![](https://ftp.bmp.ovh/imgs/2020/06/bf6ed7fc695057a8.png)
+
+##### 1.2.2.3 结构体uvc_control_mapping
+
+**uvc_ctrl_mappings**是`uvc_control_mapping`类型的结构体变量，也是一个静态的结构体，简略看下里面定义了啥：
+
+```c
+static struct uvc_control_mapping uvc_ctrl_mappings[] = {
+    {
+		.id		= V4L2_CID_PAN_ABSOLUTE,
+		.name		= "Pan (Absolute)",
+		.entity		= UVC_GUID_UVC_CAMERA,
+		.selector	= UVC_CT_PANTILT_ABSOLUTE_CONTROL,
+		.size		= 32,
+		.offset		= 0,
+		.v4l2_type	= V4L2_CTRL_TYPE_INTEGER,
+		.data_type	= UVC_CTRL_DATA_TYPE_UNSIGNED,
+	},
+	{
+		.id		= V4L2_CID_TILT_ABSOLUTE,
+		.name		= "Tilt (Absolute)",
+		.entity		= UVC_GUID_UVC_CAMERA,
+		.selector	= UVC_CT_PANTILT_ABSOLUTE_CONTROL,
+		.size		= 32,
+		.offset		= 32,
+		.v4l2_type	= V4L2_CTRL_TYPE_INTEGER,
+		.data_type	= UVC_CTRL_DATA_TYPE_UNSIGNED,
+	},
+}
+```
+
+可以看到这里的`id`开头都是`V4L2`，而`entity`和`selector`都对应着`uvc_control_info uvc_ctrls`中定义的`entity`和`selector`。
+
+另外`v4l2_type`对应着设置的数据类型，`data_type`则定义了数据为有符号还是无符号。
+
+这个结构体从我的理解来看，就是将UVC定义的控制，映射到v4l2，并建立两者之间的关系。
+
+##### 1.2.2.4 方法uvc_ctrl_add_info
+这个方法核心就一行代码：
+> goldfish\drivers\media\usb\uvc\uvc_ctrl.c
+
+```c
+static int uvc_ctrl_add_info(struct uvc_device *dev, struct uvc_control *ctrl,
+	const struct uvc_control_info *info)
+{
+    ctrl->info = *info;
+}
+```
+将上一步`uvc_control_info`变量给到`uvc_control`的info。`uvc_control`的定义如下：
+
+> goldfish\drivers\media\usb\uvc\uvcvideo.h
+
+```c
+struct uvc_control {
+	struct uvc_entity *entity;
+	struct uvc_control_info info;
+
+	__u8 index;	/* Used to match the uvc_control entry with a
+			   uvc_control_info. */
+	__u8 dirty:1,
+	     loaded:1,
+	     modified:1,
+	     cached:1,
+	     initialized:1;
+
+	__u8 *uvc_data;
+};
+```
+
+##### 1.2.2.5 方法__uvc_ctrl_add_mapping
+同样的，将`uvc_control_mapping`数据赋值到`uvc_control`对象中：
+> goldfish\drivers\media\usb\uvc\uvc_ctrl.c
+
+```c
+static int __uvc_ctrl_add_mapping(struct uvc_device *dev,
+	struct uvc_control *ctrl, const struct uvc_control_mapping *mapping)
+{
+	struct uvc_control_mapping *map;
+	map = kmemdup(mapping, sizeof(*mapping), GFP_KERNEL);
+	map->menu_info = kmemdup(mapping->menu_info, size, GFP_KERNEL);
+	list_add_tail(&map->list, &ctrl->info.mappings);
+}
+```
+
+`uvc_control_info`的`mappings`作为链表头，将`map->list`添加到后面。
+
+### 1.3 总结
+在初始化的过程中可以将UVC协议的文档跟代码建立联系，以帮助理解代码的逻辑。待理解了各种数据类型定义的原理及流程之后，发现其实现了UVC与V4L2的连接，这样下一步的工作就比较好开展了。
+
+UVC初始化的部分到这里告一段落，接下来要根据具体需求做一些定制的工作。
