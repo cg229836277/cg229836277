@@ -1,0 +1,58 @@
+---
+layout: post
+title:  "算法-排序-希尔排序"
+date:   2020-8-1 16:00:25 +0800
+categories: 喜刷刷
+---
+
+> 文章将会同步到个人微信公众号：Android部落格
+
+## 1.1 描述
+希尔排序在数组中采用跳跃式分组的策略，通过某个增量将数组元素划分为若干组，然后分组进行插入排序，随后逐步缩小增量，继续按组进行插入排序操作，直至增量为1。
+
+希尔排序通过这种策略使得整个数组在初始阶段达到从宏观上看基本有序，小的基本在前，大的基本在后。然后缩小增量，到增量为1时，其实多数情况下只需微调即可，不会涉及过多的数据移动。
+
+我们来看下希尔排序的基本步骤，在此我们选择增量gap=length/2，缩小增量继续以gap = gap/2的方式，这种增量选择我们可以用一个序列来表示，{n/2,(n/2)/2...1}，称为增量序列。
+
+## 1.2 代码
+
+```java
+public static void shellInsertSort() {
+    int size = number.length;
+    int delta = size;
+    while (true) {
+        delta = delta / 2;
+        for (int i = 0; i < delta; i++) {
+            Log.d(TAG, "delta is " + delta + " , i = " + i);
+            for (int j = i + delta; j < size; j += delta) {
+                int tempData = number[j];
+                int k = j - delta;
+                while (k >= 0 && number[k] > tempData) {
+                    number[k + delta] = number[k];
+                    k -= delta;
+                }
+                number[k + delta] = tempData;
+            }
+        }
+        if (delta == 1) {
+            break;
+        }
+    }
+    Log.d(TAG, "sorted number is " + Arrays.toString(number));
+}
+```
+
+## 1.3 总结
+
+- 最外层的循环被delta控制，当分组间隔为1时，就可以跳出了；
+- 第二层循环其实确定了分组的界限，第一次在数组的中间，然后不断往左偏移；
+- 第三层循环在第二层循环的基础上往后偏移一个delta位置，同时记住这个位置的值到tempData变量，同时记住开始与它比较的初始位置，每次都是j后面的一个偏移delta的位置k；
+- 最后一层就是每次不断往左边偏移delta，并将偏移的位置与j位置的值比较。
+
+如下图所示，开始delta等于4，后续每间隔4个元素做比较，从后往前比较。
+
+- 第二行中8与3比较；7与3比较，只要比3大，8挪到3的位置，7挪到8的位置，最后跳出while循环，3挪到7的位置。这样前四行完成了delta为4的循环；
+- 5，6行完成了delta等于2的循环；
+- 剩下的完成了delta等于1的循环。
+
+![](https://ftp.bmp.ovh/imgs/2020/07/0e59efaed5636f95.jpg)

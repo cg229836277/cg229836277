@@ -1,0 +1,54 @@
+---
+layout: post
+title:  "算法-排序-选择排序"
+date:   2020-8-1 16:00:25 +0800
+categories: 喜刷刷
+---
+
+> 文章将会同步到个人微信公众号：Android部落格
+
+## 1.1 描述
+选择排序(Selection-sort)是一种简单直观的排序算法。它的工作原理：首先在未排序序列中找到最小（大）元素，存放到排序序列的起始位置，然后，再从剩余未排序元素中继续寻找最小（大）元素，然后放到已排序序列的末尾。以此类推，直到所有元素均排序完毕。 
+
+## 1.2 代码
+
+```java
+class Untitled {
+	public static void insertSort(){
+		int[] numbers = {5,4,3,7,2,5,1,9,12};
+		int length = numbers.length;
+		for(int index = 0;index < length;index++){
+			//第一层循环找到需要比较的起始位置
+			int minValueIndex = index;
+			for(int index1 = index + 1;index1 < length; index1++){
+			//第二层循环从第一层循环的后一个元素开始比较
+				int tempValue = numbers[index1];
+				//只要后面的元素比前面的元素小，就记下这个元素的序号，一直找到最小的元素
+				if(tempValue < numbers[index]){
+					minValueIndex = index1;
+				}
+			}
+			//找到最小的元素序号之后，跟第一层循环中起始位置元素交换
+			int temp = numbers[index];
+			numbers[index] = numbers[minValueIndex];
+			numbers[minValueIndex] = temp;
+		}
+		
+		for(int value:numbers){
+			System.out.println("value is:" + value);
+		}
+	}
+	
+	public static void main(String[] args) {
+		insertSort();
+	}
+}
+```
+
+## 1.3 总结
+
+第一层循环不断将起始位置往后面挪，第二层循环从第一层循环的后一个元素开始，不断与第一层其实位置比较，较小的元素最终被找出来，并放到第一层的起始位置，而起始位置被交换到了后面。
+
+时间复杂度为n的平方，空间复杂度为1。
+
+不稳定，意味着相等元素位置可能发生变动。

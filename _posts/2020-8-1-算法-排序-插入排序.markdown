@@ -1,0 +1,75 @@
+---
+layout: post
+title:  "算法-排序-插入排序"
+date:   2020-8-1 16:00:25 +0800
+categories: 喜刷刷
+---
+
+> 文章将会同步到个人微信公众号：Android部落格
+
+## 1.1 描述
+
+算法描述如下：
+
+- 从第一个元素开始，该元素可以认为已经被排序；
+
+- 取出下一个元素，在已经排序的元素序列中从后向前扫描；
+
+- 如果该元素（已排序）大于新元素，将该元素移到下一位置；
+
+- 重复步骤3，直到找到已排序的元素小于或者等于新元素的位置；
+
+- 将新元素插入到该位置后；
+
+- 重复步骤2~5。
+
+## 1.2 代码
+
+```java
+public class HelloWorld {
+	public static void insertSort(){
+		int[] numbers = {5,4,3,7,2,5,1,9,12,6,8,1,34};
+		int length = numbers.length;
+		int index = 0;
+		
+		while(index < length - 1){
+			int later = index + 1;
+			int front = index;
+			while(front >= 0){
+				if(numbers[later] < numbers[front]){
+					int temp = numbers[front];
+					numbers[front] = numbers[later];
+					numbers[later] = temp;
+					later = front;
+				}
+				--front;
+			}
+			index++;
+		}
+		for(int value:numbers){
+			System.out.println("value is:" + value);
+		}
+	}
+	
+	public static void main(String[] args) {
+		insertSort();
+	}
+}
+```
+
+## 1.3 总结
+
+插入排序需要注意三个点：
+- 1.分两层循环，第一层循环用于确定从后往前遍历的范围，不断往后偏移一个位置；
+- 2.第二层循环起始位置为第一层循环的位置，但是开始比较的位置为这个位置的后一个位置，只有当后一个位置比前一个位置小的时候，两者发生交换，同时交换的还有位置的索引，否则只交换数字，会导致比较元素丢失。
+- 3.第二层循环交换元素完成之后，索引往前挪，挪的位置始终是2中被比较的元素，这也是为什么需要交换索引的原因。
+
+以1 4 3 2为例：
+
+> 1 **4** 3 2 => 1 4 3 2 
+
+> 1 4 **3** 2 => 1 3 4 2 
+
+> 1 3 4 **2** => 1 3 2 4 
+
+> 1 3 **2** 4 => 1 2 3 4 
