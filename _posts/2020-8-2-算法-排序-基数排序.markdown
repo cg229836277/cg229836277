@@ -1,0 +1,79 @@
+---
+layout: post
+title:  "算法-排序-基数排序"
+date:   2020-8-2 15:00:25 +0800
+categories: 喜刷刷
+---
+
+> 文章将会同步到个人微信公众号：Android部落格
+
+## 1.1 描述
+- 取得数组中的最大数，并取得位数；
+- arr为原始数组，从最低位开始取每个位组成radix数组；
+- 对radix进行计数排序（利用计数排序适用于小范围数的特点）；
+
+基数排序的主要思路是,将所有待比较数值(注意,必须是正整数)统一为同样的数位长度,数位较短的数前面补零. 然后, 从最低位开始, 依次进行一次稳定排序(我们常用上一篇blog介绍的计数排序算法, 因为每个位可能的取值范围是固定的从0到9).这样从最低位排序一直到最高位排序完成以后, 数列就变成一个有序序列.
+
+## 1.2 代码
+
+```java
+public static int getBite(int value,int mod){
+	return (value / mod) % 10;
+}
+
+public static void radixSort(){
+	int max = numbers[0];
+	for(int index = 0;index < size;index++){
+		if(numbers[index] > max){
+			max = numbers[index];
+		}
+	}
+	int bucketSize = 10;
+	List<List<Integer>> radixList = new ArrayList<List<Integer>>();
+	for(int x = 0; x < bucketSize;x++){
+		radixList.add(new ArrayList<Integer>());
+	}
+	int maxBite = String.valueOf(max).length();
+	int curMod = 1;
+	for(int i = 0;i < maxBite;i++){
+		for(int j = 0; j < size;j++){
+			int valueIndex = getBite(numbers[j],curMod);
+			List<Integer> tempList = radixList.get(valueIndex);
+			tempList.add(numbers[j]);
+		}
+		int originIndex = 0;
+		System.out.println("--------------------");
+		for(int y = 0; y < bucketSize;y++){
+			List<Integer> itemRadixList = radixList.get(y);
+			int itemSize = itemRadixList.size();
+			if(itemSize == 0){
+				continue;
+			}
+			System.out.println("itemSize:" + itemSize);
+			for(int z = 0; z < itemSize;z++){
+				numbers[originIndex++] = itemRadixList.get(z);
+			}
+			if(i != maxBite - 1){
+				itemRadixList.clear();
+			}
+		}
+		curMod *= 10;
+	}
+}
+
+public static void main(String []args) {
+	radixSort();
+	for(int value : numbers){
+		System.out.println("count value is:" + value);
+	}
+}
+```
+
+## 1.3 总结
+
+- 先选出最大值；
+- 按照最大值的位数逐个遍历数组中的元素，从低位到高位取位数上的数字，按照位数的数字放到对应的数组序号中；
+- 重复上一步一直到最高位，待遍历完成，基本上有序，对每个数组内的元素再做一次排序就整体有序了。
+
+示意图如下：
+![](https://ftp.bmp.ovh/imgs/2020/08/9a008a199cc3ed42.jpg)

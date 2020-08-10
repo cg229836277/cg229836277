@@ -1,0 +1,237 @@
+---
+layout: post
+title:  "算法-二叉树基本知识"
+date:   2020-8-2 21:22:25 +0800
+categories: 喜刷刷
+---
+
+> 文章将会同步到个人微信公众号：Android部落格
+
+## 1 基本概念
+
+- 节点的度
+
+节点拥有的子树的个数称为该节点的度。
+
+- 树的度
+
+树中所有节点的度的最大值称为该树的度。
+
+- 节点的层次
+
+从根节点到树中某个节点所经路径上的分支数称为该节点的层次。
+
+- 树的深度
+
+树中所有节点的层次的最大值称为该树的深度。
+
+![](https://ftp.bmp.ovh/imgs/2020/08/c93c4fe5fb13d11c.jpg)
+
+上图中除最底层的叶子结点，所有节点的度为2，树的度为2，节点HIJ的层次为3，所以树的深度为3。
+
+**性质1：**
+
+若根节点的层次为0， 则非空二叉树第i层上最多有2^i个节点。
+
+**性质2：**
+
+若二叉树根节点的深度为0，则深度为K的二叉树最大节点数为2^(k + 1) - 1个。
+
+**性质3：**
+
+对于非空二叉树，如果叶子结点的个数为n，度为2的节点数为m，则有：n = m + 1。
+
+**性质4：**
+
+对于具有n个节点的完全二叉树，如果按照从上往下从左往右的顺序对所有节点从0开始编号，则有：
+
+如果2i + 1 < n，那么i节点的左孩子节点序号为2i + 1，否则节点i没有左节点。
+
+如果2i + 2 < n，那么i节点的右孩子节点序号为2i + 2，否则节点i没有右节点。
+
+二叉树的数据一般用数组或链表存储。
+
+## 2 创建二叉树
+
+首先定义二叉树的基本数据结构：
+
+```java
+public class BinaryTreeBase {
+    public BinaryTreeBase lChild;
+    public BinaryTreeBase rChild;
+    public int value;
+
+    public BinaryTreeBase(int value) {
+        this.value = value;
+    }
+}
+```
+
+接着创建二叉树：
+
+```java
+private static BinaryTreeBase buildBinaryTree(BinaryTreeBase binaryTreeBase, int index) {
+    if (index >= size / 2) {
+        return null;
+    }
+    if (binaryTreeBase == null) {
+        binaryTreeBase = new BinaryTreeBase(number[index]);
+    }
+    int leftIndex = 2 * index + 1;
+    int rightIndex = 2 * index + 2;
+    if (leftIndex < size) {
+        binaryTreeBase.lChild = new BinaryTreeBase(number[leftIndex]);
+        buildBinaryTree(binaryTreeBase.lChild, leftIndex);
+    }
+    if (rightIndex < size) {
+        binaryTreeBase.rChild = new BinaryTreeBase(number[rightIndex]);
+        buildBinaryTree(binaryTreeBase.rChild, rightIndex);
+    }
+    return binaryTreeBase;
+}
+
+private static int[] number = {15, 28, 33, 16, 49, 10, 34, 61, 27, 36, 57, 68, 71, 16, 87, 90, 134, 243, 8, 51, 57};
+private static int size = number.length;
+private static BinaryTreeBase binaryTreeBase = null;
+
+public static void start() {
+    binaryTreeBase = buildBinaryTree(binaryTreeBase, 0);
+}
+```
+
+## 3 二叉树前序遍历
+
+```java
+/*
+ *@Params :root,left,right
+ *@Author :chuck-os
+ *@Date :2020/7/7
+ */
+public static void frontScan(BinaryTreeBase binaryTreeBase1) {
+    if (binaryTreeBase == null) {
+        binaryTreeBase = buildBinaryTree(binaryTreeBase, 0);
+    }
+    if (binaryTreeBase1 == null) {
+        return;
+    }
+    Log.d(TAG, "frontScan number is:" + binaryTreeBase1.value);
+    frontScan(binaryTreeBase1.lChild);
+    frontScan(binaryTreeBase1.rChild);
+}
+```
+
+## 4 二叉树中序遍历
+
+```java
+/*
+ *@Params :left,root,right
+ *@Author :chuck-os
+ *@Date :2020/7/7
+ */
+public static void middleScan(BinaryTreeBase binaryTreeBase1) {
+    if (binaryTreeBase == null) {
+        binaryTreeBase = buildBinaryTree(binaryTreeBase, 0);
+    }
+    if (binaryTreeBase1 == null) {
+        return;
+    }
+    middleScan(binaryTreeBase1.lChild);
+    Log.d(TAG, "middleScan number is:" + binaryTreeBase1.value);
+    middleScan(binaryTreeBase1.rChild);
+}
+```
+
+## 5 二叉树后序遍历
+
+```java
+/*
+ *@Params :left,right,root
+ *@Author :chuck-os
+ *@Date :2020/7/7
+ */
+public static void backScan(BinaryTreeBase binaryTreeBase1) {
+    if (binaryTreeBase == null) {
+        binaryTreeBase = buildBinaryTree(binaryTreeBase, 0);
+    }
+    if (binaryTreeBase1 == null) {
+        return;
+    }
+    backScan(binaryTreeBase1.lChild);
+    backScan(binaryTreeBase1.rChild);
+    Log.d(TAG, "backScan number is:" + binaryTreeBase1.value);
+}
+```
+
+## 6 二叉树层序遍历
+
+```java
+/*
+ *@Params :from one layer to another layer
+ *@Author :chuck-os
+ *@Date :2020/7/7
+ */
+public static void layerScan() {
+    if (binaryTreeBase == null) {
+        binaryTreeBase = buildBinaryTree(binaryTreeBase, 0);
+    }
+    Queue<BinaryTreeBase> queue = new LinkedList();
+    BinaryTreeBase tempBinaryTree = binaryTreeBase;
+    queue.add(tempBinaryTree);
+    while (tempBinaryTree != null) {
+        tempBinaryTree = queue.poll();
+        if (tempBinaryTree == null) {
+            break;
+        }
+        Log.d(TAG, "layerScan number is:" + tempBinaryTree.value);
+        if (tempBinaryTree.lChild != null) {
+            queue.add(tempBinaryTree.lChild);
+        }
+        if (tempBinaryTree.rChild != null) {
+            queue.add(tempBinaryTree.rChild);
+        }
+    }
+}
+```
+
+## 7 使用栈实现后序遍历
+
+```java
+public static void backScanWithStack(){
+	if(binaryTreeBase == null){
+		binaryTreeBase = buildBinaryTree(binaryTreeBase, 0);
+	}
+	Stack<BinaryTreeBase> stack = new Stack<BinaryTreeBase>();
+    BinaryTreeBase tempBinaryTree = binaryTreeBase;
+    stack.push(tempBinaryTree);
+	
+	BinaryTreeBase lastVisitBinaryTree = null;
+	
+	while(tempBinaryTree != null){
+		if(tempBinaryTree.lChild != null){
+			System.out.println("backScanWithStack left number is:" + tempBinaryTree.lChild.value);
+			stack.push(tempBinaryTree.lChild);
+		}
+		tempBinaryTree = tempBinaryTree.lChild;
+	}
+
+	while(!stack.isEmpty()){
+		tempBinaryTree = stack.pop();
+		BinaryTreeBase rightChild = tempBinaryTree.rChild;
+		if(rightChild != null && rightChild != lastVisitBinaryTree){
+			stack.push(tempBinaryTree);
+			tempBinaryTree = rightChild;
+			while(tempBinaryTree != null){
+				stack.push(tempBinaryTree);
+				tempBinaryTree = tempBinaryTree.lChild;
+			}
+		} else {
+			System.out.println("backScanWithStack number is:" + tempBinaryTree.value);
+			lastVisitBinaryTree = tempBinaryTree;
+		}
+	}
+}
+```
+
+后续遍历示意图如下：
+
+![](https://ftp.bmp.ovh/imgs/2020/08/717b3bfe087b0c86.jpg)
