@@ -23,4 +23,4 @@ permalink: /about/
 
 ## 我的微信公众号
 
-![微信公众号](https://imgchr.com/i/sIgx9s)
+[![sIgx9s.jpg](https://s3.ax1x.com/2021/01/22/sIgx9s.jpg)](https://imgchr.com/i/sIgx9s)
