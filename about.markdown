@@ -23,4 +23,4 @@ permalink: /about/
 
 ## 我的微信公众号
 
-![微信公众号](https://sm.ms/image/hZn9HNxodfUwrek)
+![微信公众号](https://imgchr.com/i/sIgx9s)
