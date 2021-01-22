@@ -23,4 +23,4 @@ permalink: /about/
 
 ## 我的微信公众号
 
-![微信公众号](https://ftp.bmp.ovh/imgs/2020/04/f472fa7e9c62a8c7.jpg)
+![微信公众号](https://sm.ms/image/hZn9HNxodfUwrek)
