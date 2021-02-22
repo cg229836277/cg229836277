@@ -1,0 +1,162 @@
+---
+layout: post
+title:  "html-头部元素（非原创）"
+date:   2021-2-20 11:09:22 +0800
+categories: html
+---
+
+> 文章来源于[https://developer.mozilla.org/](https://developer.mozilla.org/)
+
+> https://developer.mozilla.org/zh-CN/docs/Learn/HTML/Introduction_to_HTML/The_head_metadata_in_HTML
+
+## 1、什么是 HTML 头部元素?
+
+```html
+<head>
+  <meta charset="utf-8">
+  <title>我的测试站点</title>
+</head>
+```
+
+HTML <head> 元素与 <body> 元素不同，它的内容不会在浏览器中显示，它的作用是保存页面的一些 元数据。
+
+## 2、添加标题
+
+之前已经讲过 <title>，它可以为文档添加标题。别和 \<h1> 元素搞混了，\<h1> 是为 body 添加标题的。有时候\<h1> 也叫作网页标题。但是二者并不相同。
+
+- \<h1> 元素在页面加载完毕时显示在页面中，通常只出现一次，用来标记页面内容的标题（故事名称、新闻摘要，等等）。
+-  <title> 元素是一项元数据，用于表示整个 HTML 文档的标题（而不是文档内容）。
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>这里是head标签中的标题</title>
+    </head>
+    <body>
+        <h1>这里是内容的标题</h1>
+    </body>
+</html>
+```
+
+## 3、元数据：<meta>元素
+
+元数据就是描述数据的数据，而HTML有一个“官方的”方式来为一个文档添加元数据——  <meta> 元素。
+
+### 3.1 指定你的文档中字符的编码
+
+在上面的例子中，这行是被包含的：
+
+```html
+<meta charset="utf-8">
+```
+
+这个元素简单的指定了文档的字符编码 —— 在这个文档中被允许使用的字符集。 utf-8 是一个通用的字符集，它包含了任何人类语言中的大部分的字符。 意味着该 web 页面可以显示任意的语言。
+
+### 3.2 添加作者和描述
+
+许多<meta> 元素包含了name 和 content 特性：
+
+- name 指定了meta 元素的类型； 说明该元素包含了什么类型的信息。
+- content 指定了实际的元数据内容。
+这两个meta 元素对于定义你的页面的作者和提供页面的简要描述是很有用的 。
+
+```html
+<meta name="author" content="Chuck Chan">
+<meta name="description" content="you can touch me with wechat,the number is cg229836277.">
+```
+
+## 4、增加自定义图标
+
+页面添加图标的方式有：
+
+- 1、将其保存在与网站的索引页面相同的目录中，以.ico格式保存（大多数浏览器将支持更通用的格式，如.gif或.png，但使用ICO格式将确保它能在如Internet Explorer 6一样久远的浏览器显示）
+- 2、将以下行添加到HTML <head>中以引用它：
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>这里是head标签中的标题</title>
+        <link rel="shortcut icon" href="head.jpg" type="image/image">
+    </head>
+    <body>
+        <h1>这里是内容的标题</h1>
+    </body>
+</html>
+```
+
+## 5、在HTML中应用CSS和JavaScript
+
+所有网站都会使用 CSS 让网页更加炫酷，使用JavaScript让网页有交互功能，比如视频播放器，地图，游戏以及更多功能。这些应用在网页中很常见，它们分别使用 <link>元素以及 <script> 元素。
+
+ - <link> 元素经常位于文档的头部。这个link元素有2个属性，rel="stylesheet"表明这是文档的样式表，而 href包含了样式表文件的路径：
+
+```html
+<link rel="stylesheet" href="my-css-file.css">
+```
+
+ - <script> 部分没必要非要放在文档头部；实际上，把它放在文档的尾部（在 </body>标签之前）是一个更好的选择，这样可以确保在加载脚本之前浏览器已经解析了HTML内容（如果脚本加载某个不存在的元素，浏览器会报错）。
+
+```html
+<script src="my-js-file.js"></script>
+```
+
+> 注意： <script>元素看起来像一个空元素，但它并不是，因此需要一个结束标记。您还可以选择将脚本放入<script>元素中，而不是指向外部脚本文件。
+
+示例如下：
+
+> html_head.html
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>这里是head标签中的标题</title>
+        <link rel="shortcut icon" href="head.jpg" type="image/image">
+        <link rel="stylesheet" href="head_css.css">
+    </head>
+    <body>
+        <h1 id="h1_test">这里是内容的标题</h1>
+        <br>
+        <p id="p_test">这个是测试的段落元素</p>
+
+        <script src="head_js.js"></script>
+    </body>
+</html>
+```
+
+> head_js.js
+
+```javascript
+const h1 = document.getElementById("h1_test");
+const p1 = document.getElementById("p_test");
+h1.onclick = function () {
+    p1.innerHTML = "h1标题被点击了";
+}
+```
+
+
+> head_css.css
+
+```css
+p {
+    background-color: bisque;
+}
+```
+
+## 6、为文档设定主语言
+可以通过添加lang属性到HTML开始标签中来实现，如下所示：
+
+```html
+<html lang="zh-CN">
+```
+
+还可以将文档的分段设置为不同的语言。例如，我们可以把日语部分设置为日语，如下所示：
+
+```html
+<p>日语实例: <span lang="jp">ご飯が熱い。</span>.</p>
+```
